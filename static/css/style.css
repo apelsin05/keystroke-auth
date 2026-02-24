@@ -1,0 +1,245 @@
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* ── REGISTER STEP 1 layout ───────────────────────────────────── */
+
+.container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+.left-section {
+  width: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #140166;
+}
+
+.left-title {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 2.5rem;
+  color: white;
+  text-align: center;
+  text-shadow: #35286f 2px 2px 4px;
+}
+
+.right-section {
+  width: 50%;
+  display: flex;
+  background: linear-gradient(to right, #1b0677, #210a88, #15489e, #0e6cab);
+}
+
+form {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.form-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding-left: 5%;
+}
+
+/* constraint list row needs less flex so it doesn't stretch too tall */
+.constraints-row {
+  flex: 0 0 auto;
+  padding: 0.5rem 0 0.5rem 5%;
+  align-items: flex-start;
+}
+
+label {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 1.875rem;
+  color: white;
+  text-shadow: #35286f 2px 2px 4px;
+}
+
+/* ── INPUTS ───────────────────────────────────────────────────── */
+
+input {
+  background-color: #35286f;
+  border: 1.5px solid #48baf3;
+  border-radius: 50px;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  font-family: "Times New Roman", Times, serif;
+  box-shadow: 4px 4px 8px rgba(53, 40, 111, 0.2);
+  width: 100%;
+  color: white;                /* FIX: text was invisible on dark background */
+  outline: none;
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ── PASSWORD SHOW/HIDE WRAPPER ───────────────────────────────── */
+
+.password-wrapper {
+  position: relative;
+  width: 300px;
+}
+
+.password-wrapper input {
+  width: 100%;
+  padding-right: 2.5rem;
+  box-sizing: border-box;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  font-size: 1rem;
+  user-select: none;
+}
+
+/* ── LIVE CONSTRAINT LIST ─────────────────────────────────────── */
+
+.constraints {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.constraints li {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.55);
+  transition: color 0.2s ease;
+}
+
+.constraints li.met {
+  color: #7eff9a;   /* green when constraint satisfied */
+}
+
+/* ── SUBMIT BUTTON ────────────────────────────────────────────── */
+
+button[type="submit"] {
+  background-color: #48baf3;
+  color: #35286f;
+  border: none;
+  border-radius: 50px;
+  padding: 0.5rem 1.5rem;
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: 3px 3px 6px rgba(53, 40, 111, 0.2);
+  transition: opacity 0.2s ease;
+}
+
+button[type="submit"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── FOOTER: link + button side by side ──────────────────────── */
+
+.form-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1rem 1rem 5%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-link {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.auth-link a {
+  color: #48baf3;
+  text-decoration: none;
+}
+
+.auth-link a:hover {
+  text-decoration: underline;
+}
+
+/* ── STEP 2 / LOGIN card layout ───────────────────────────────── */
+
+.container-step2 {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(
+    to right,
+    #140166,
+    #1b0677,
+    #210a88,
+    #15489e,
+    #0e6cab
+  );
+}
+
+.form-card {
+  background-color: rgba(53, 40, 111, 0.5);
+  border-radius: 20px;
+  padding: 3rem;
+  width: 40%;
+  max-width: 500px;
+  min-width: 300px;
+  box-shadow: 8px 8px 20px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+}
+
+/* card title used in login + step2 (replaces left-title which was layout-specific) */
+.card-title {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 1.8rem;
+  color: white;
+  text-align: center;
+  margin-bottom: 1.5rem;
+  text-shadow: #35286f 2px 2px 4px;
+}
+
+.form-row-vertical {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+/* ── CHECKBOX ─────────────────────────────────────────────────── */
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-row label {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: none;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+  box-shadow: none;
+  border-radius: 0;
+  cursor: pointer;
+  border: none;
+  background: none;
+}

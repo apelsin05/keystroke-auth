@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Inregistrare - Pasul 2</title>
+  <link rel="stylesheet" href="../static/css/style.css" />
+</head>
+<body>
+
+  <div class="container-step2">
+
+    <div class="form-card">
+
+      <h2 class="card-title">Completeaza profilul</h2>
+
+      <form method="POST" action="/register/step2">
+
+        <div class="form-row-vertical">
+          <label for="username">Username *</label>
+          <input type="text" id="username" name="username" placeholder="Introduceti username" required />
+        </div>
+
+        <div class="form-row-vertical">
+          <label for="name">Nume</label>
+          <input type="text" id="name" name="name" placeholder="Introduceti numele" />
+        </div>
+
+        <div class="form-row-vertical">
+          <label for="surname">Prenume</label>
+          <input type="text" id="surname" name="surname" placeholder="Introduceti prenumele" />
+        </div>
+
+        <div class="form-row-vertical">
+          <label for="phone">Telefon</label>
+          <input type="tel" id="phone" name="phone" placeholder="Introduceti numarul de telefon" />
+        </div>
+
+        <div class="form-row-vertical checkbox-row">
+          <input type="checkbox" id="security" name="security" />
+          <label for="security">Activez masurile de siguranta</label>
+        </div>
+
+        <div class="form-footer">
+          <button type="submit">Finalizeaza →</button>
+        </div>
+
+      </form>
+
+    </div>
+  </div>
+
+</body>
+</html>

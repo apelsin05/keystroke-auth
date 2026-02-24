@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login</title>
+  <link rel="stylesheet" href="../static/css/style.css" />
+</head>
+<body>
+
+  <div class="container-step2">
+
+    <div class="form-card">
+
+      <h1 class="card-title">Autentificare</h1>
+
+      <form method="POST" action="/login">
+
+        <div class="form-row-vertical">
+          <label for="identifier">Email / Username</label>
+          <input type="text" id="identifier" name="identifier" placeholder="Email sau username" required />
+        </div>
+
+        <div class="form-row-vertical">
+          <label for="password">Parola</label>
+          <div class="password-wrapper">
+            <input type="password" id="password" name="password" placeholder="Introduceti parola" required />
+            <span class="toggle-password" onclick="togglePassword('password', this)">👁</span>
+          </div>
+        </div>
+
+        <!-- hidden field: keystroke data injected here by JS before submit -->
+        <input type="hidden" id="keystrokes_data" name="keystrokes_data" />
+
+        <div class="form-footer">
+          <span class="auth-link">Nu ai cont? <a href="/register/step1">Inregistreaza-te</a></span>
+          <button type="submit">Intra in cont</button>
+        </div>
+
+      </form>
+
+    </div>
+
+  </div>
+
+  <script src="../static/js/keystroke_capture.js"></script>
+
+  <script>
+    function togglePassword(fieldId, icon) {
+      const field = document.getElementById(fieldId);
+      if (field.type === 'password') {
+        field.type = 'text';
+        icon.textContent = '🙈';
+      } else {
+        field.type = 'password';
+        icon.textContent = '👁';
+      }
+    }
+  </script>
+
+</body>
+</html>

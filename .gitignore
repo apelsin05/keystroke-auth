@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+
+# Flask session files
+data/sessions/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# VS Code settings
+.vscode/
+
+# Environment variables (future use)
+.env
+
+# CSV data files (contain user data)
+data/*.csv
