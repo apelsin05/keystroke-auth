@@ -1,0 +1,182 @@
+:root {
+  --primary: hsl(210, 90%, 55%);
+  --primary-2: hsl(220, 100%, 60%);
+  --softGrey: #c0c8e8;
+  --softTint: rgba(0, 0, 0, 0.25);
+  --bounce: 0.3s cubic-bezier(0.3, -0.1, 0.5, 1.4);
+  --ease: 0.2s cubic-bezier(0.3, 0.1, 0.3, 1);
+}
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  list-style-type: none;
+  box-sizing: border-box;
+  font-family: "Times New Roman", Times, serif;
+}
+
+body {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--softGrey);
+  background: linear-gradient(to right, #140166, #1b0677, #210a88, #15489e, #0e6cab);
+}
+
+.page-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+}
+
+h1 {
+  font-size: 1.8rem;
+  color: white;
+  text-shadow: #35286f 2px 2px 4px;
+  text-align: center;
+}
+
+p.subtitle {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  margin-top: -1.5rem;
+}
+
+input[type=checkbox] {
+  position: absolute;
+  opacity: 0.001;
+}
+
+form.otp-form {
+  --size: 3rem;
+  --space: 1rem;
+  padding-left: var(--space);
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border-radius: calc(var(--size) / 4);
+  box-shadow: 0 1em 2em var(--softTint);
+  background-color: rgba(255, 255, 255, 0.07);
+  transition: var(--bounce);
+}
+form.otp-form:focus-within {
+  transform: scale(0.97);
+  box-shadow: 0 1em 1em var(--softTint);
+}
+form.otp-form input[type=number] {
+  -moz-appearance: none;
+       appearance: none;
+  -webkit-appearance: none;
+  width: var(--size);
+  height: calc(var(--size) * 1.4);
+  font-size: calc(var(--size) * 0.7);
+  text-align: center;
+  border: 0.12em solid var(--softTint);
+  border-radius: calc(var(--size) * 0.2);
+  outline: none;
+  margin: var(--space);
+  margin-left: 0;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: white;
+  transition: var(--ease);
+}
+form.otp-form input[type=number]::-webkit-outer-spin-button, form.otp-form input[type=number]::-webkit-inner-spin-button {
+  display: none;
+}
+form.otp-form input[type=number]:not(:-moz-placeholder) {
+  border-color: var(--primary);
+}
+form.otp-form input[type=number]:not(:placeholder-shown) {
+  border-color: var(--primary);
+}
+form.otp-form .submit {
+  -moz-appearance: none;
+       appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  display: grid;
+  place-items: center;
+  width: calc(var(--size) + var(--space) * 2);
+  padding: 1em;
+  cursor: pointer;
+  background-color: var(--softTint);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 512'%3E%3Cpath fill='white' d='M224.3 273l-136 136c-9.4 9.4-24.6 9.4-33.9 0l-22.6-22.6c-9.4-9.4-9.4-24.6 0-33.9l96.4-96.4-96.4-96.4c-9.4-9.4-9.4-24.6 0-33.9L54.3 103c9.4-9.4 24.6-9.4 33.9 0l136 136c9.5 9.4 9.5 24.6.1 34z'/%3E%3C/svg%3E");
+  background-position: 50% 50%;
+  background-size: 30%;
+  background-repeat: no-repeat;
+  transition: var(--ease);
+  animation: tension 0.36s cubic-bezier(0.2, 0.4, 0.5, 1) paused alternate infinite;
+}
+form.otp-form .submit:focus {
+  background-color: var(--primary);
+  animation-play-state: running;
+}
+form.otp-form .indicator {
+  --i: 0;
+  position: absolute;
+  bottom: 0;
+  width: var(--size);
+  height: 0.5em;
+  border-radius: 0.5em 0.5em 0 0;
+  background: var(--primary);
+  transform: translateX(calc((var(--size) + var(--space)) * (var(--i) - 1)));
+  transition: var(--bounce);
+}
+
+.submit:focus ~ .indicator {
+  --i: 7;
+}
+
+#n1:focus ~ .indicator {
+  --i: 1;
+}
+
+#n2:focus ~ .indicator {
+  --i: 2;
+}
+
+#n3:focus ~ .indicator {
+  --i: 3;
+}
+
+#n4:focus ~ .indicator {
+  --i: 4;
+}
+
+#n5:focus ~ .indicator {
+  --i: 5;
+}
+
+#n6:focus ~ .indicator {
+  --i: 6;
+}
+
+#submitted:checked ~ .otp-form {
+  background: var(--primary);
+  transform: translateX(100vw);
+  transition: var(--ease), transform var(--ease) 0.3s;
+}
+#submitted:checked ~ .otp-form input,
+#submitted:checked ~ .otp-form .indicator {
+  width: 0;
+  opacity: 0;
+  margin-right: 0;
+  transform: scaleX(0);
+}
+#submitted:checked ~ .otp-form .submit {
+  background-color: var(--primary);
+  color: white;
+}
+
+@keyframes tension {
+  to {
+    background-position-x: 60%;
+  }
+}/*# sourceMappingURL=2fa.css.map */

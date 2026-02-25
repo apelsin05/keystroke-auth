@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Verificare 2FA</title>
+  <link rel="stylesheet" href="../static/css/2fa.css" />
+</head>
+<body>
+
+  <!-- checkbox drives the success slide-out animation -->
+  <input id="submitted" type="checkbox" tabindex="-1">
+
+  <div class="page-wrapper">
+
+    <h1>Verificare in doi pasi</h1>
+    <p class="subtitle">Am trimis un cod de 6 cifre la adresa ta de email.</p>
+
+    <form class="otp-form" method="POST" action="/2fa" id="twofa-form">
+
+      <!-- 6 digit inputs: each one auto-advances focus to the next -->
+      <input type="number" min="0" max="9" maxlength="1" placeholder=" " id="n1" autofocus
+             oninput="handleInput(this, 'n2')">
+      <input type="number" min="0" max="9" maxlength="1" placeholder=" " id="n2"
+             oninput="handleInput(this, 'n3')">
+      <input type="number" min="0" max="9" maxlength="1" placeholder=" " id="n3"
+             oninput="handleInput(this, 'n4')">
+      <input type="number" min="0" max="9" maxlength="1" placeholder=" " id="n4"
+             oninput="handleInput(this, 'n5')">
+      <input type="number" min="0" max="9" maxlength="1" placeholder=" " id="n5"
+             oninput="handleInput(this, 'n6')">
+      <input type="number" min="0" max="9" maxlength="1" placeholder=" " id="n6"
+             oninput="handleInput(this, null)">
+
+      <!-- hidden field: receives the assembled 6-digit code before submit -->
+      <input type="hidden" id="code" name="code" />
+
+      <!-- submit arrow button: triggers animation then submits form -->
+      <label class="submit" tabindex="0" for="submitted"
+             onkeypress="triggerSubmit()"
+             onclick="triggerSubmit()"></label>
+
+      <span class="indicator"></span>
+
+    </form>
+
+  </div>
+
+  <script>
+    // keep each input to a single digit
+    function handleInput(field, nextId) {
+      if (field.value.length > 1) {
+        field.value = field.value.slice(-1);
+      }
+      if (field.value && nextId) {
+        document.getElementById(nextId).focus();
+      }
+    }
+
+    // assemble the 6 digits, put into hidden field, play animation, then submit
+    function triggerSubmit() {
+      const digits = ['n1','n2','n3','n4','n5','n6']
+        .map(id => document.getElementById(id).value)
+        .join('');
+
+      document.getElementById('code').value = digits;
+
+      // let the slide-out animation play (0.5s) then submit for real
+      setTimeout(function() {
+        document.getElementById('twofa-form').submit();
+      }, 500);
+    }
+  </script>
+
+</body>
+</html>
