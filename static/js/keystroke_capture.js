@@ -39,6 +39,11 @@ if (passwordField) {
         position++;
     });
 
+    // block pasting into the password field to ensure keystroke data is consistent with user input
+    passwordField.addEventListener('paste', function(event) {
+        event.preventDefault();
+    });
+
     // reset state if user clears the password field entirely
     passwordField.addEventListener('input', function() {
         if (passwordField.value.length === 0) {
