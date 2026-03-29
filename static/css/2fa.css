@@ -175,6 +175,26 @@ form.otp-form .indicator {
   color: white;
 }
 
+.flash-msg {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.9rem;
+  padding: 0.5rem 1.2rem;
+  border-radius: 50px;
+  text-align: center;
+}
+
+.flash-error {
+  background-color: rgba(255, 80, 80, 0.15);
+  color: #ff8080;
+  border: 1px solid rgba(255, 80, 80, 0.3);
+}
+
+.flash-success {
+  background-color: rgba(126, 255, 154, 0.15);
+  color: #7eff9a;
+  border: 1px solid rgba(126, 255, 154, 0.3);
+}
+
 @keyframes tension {
   to {
     background-position-x: 60%;
