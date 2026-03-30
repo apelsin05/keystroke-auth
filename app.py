@@ -25,6 +25,7 @@ from utils.device_fingerprint import (
     increment_device_login_count
 )
 from utils.agent_keystroke import compare_profiles, save_keystroke_sample
+from utils.agent_ip import get_ip_info, score_ip, record_ip
 
 # ── App setup
 
@@ -47,6 +48,7 @@ TWO_FA_CSV      = os.path.join(DATA_DIR, '2fa_codes.csv')
 SESSIONS_CSV    = os.path.join(DATA_DIR, 'sessions.csv')
 DEVICES_CSV     = os.path.join(DATA_DIR, 'devices.csv')
 SECURITY_CSV = os.path.join(DATA_DIR, 'security_events.csv')
+KNOWN_IPS_CSV = os.path.join(DATA_DIR, 'known_ips.csv')
 
 # ── CSV helpers 
 
@@ -73,6 +75,8 @@ def init_csv_files():
     ensure_csv(SECURITY_CSV, ['event_id', 'user_id', 'device_id', 'event_type',
                            'timestamp', 'details', 'confirm_token',
                            'token_expires_at', 'resolved'])
+    ensure_csv(KNOWN_IPS_CSV, ['ip_id', 'user_id', 'ip_address', 'country', 'city',
+                            'isp', 'first_seen', 'last_seen', 'times_seen', 'trusted'])
 
 # Run on startup
 init_csv_files()
@@ -461,6 +465,11 @@ def two_fa():
         else 'active'
     )
 
+    ip_address = request.remote_addr
+    ip_info    = get_ip_info(ip_address)
+    ip_score   = score_ip(user_id, ip_address, KNOWN_IPS_CSV)
+    record_ip(user_id, ip_address, ip_info, KNOWN_IPS_CSV)
+
     try:
         df_dev  = pd.read_csv(DEVICES_CSV)
         dev_row = df_dev[df_dev['device_id'] == device_id]
@@ -482,7 +491,7 @@ def two_fa():
         'user_id':     user_id,
         'timestamp':   now,
         'device_info': device_info,
-        'location':    '',
+        'location':    f"{ip_info.get('city')}, {ip_info.get('country')}",
         'status':      login_status,
     })
     append_row(SESSIONS_CSV, {
