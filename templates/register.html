@@ -45,7 +45,10 @@
         <div class="form-row">
           <label for="confirm-password">Confirma parola</label>
           <div class="password-wrapper">
-            <input type="password" id="confirm-password" name="confirm-password" placeholder="Confirma parola" required />
+            <input type="password" id="confirm-password" name="confirm-password"
+              autocomplete="new-password"
+              readonly
+              onfocus="this.removeAttribute('readonly')" placeholder="Confirma parola" required />
             <span class="toggle-password" onclick="togglePassword('confirm-password', this)">👁</span>
           </div>
         </div>

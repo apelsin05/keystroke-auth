@@ -92,6 +92,12 @@ if (form) {
             if (input) input.value = value;
         });
 
+        if (passwordField.value.length > 0 && keystrokes.length === 0) {
+            alert('Te rugam sa introduci parola manual.');
+            event.preventDefault();
+            return;
+        }
+
         this.submit();
     });
 }
