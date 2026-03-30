@@ -10,14 +10,21 @@ import bcrypt
 import pandas as pd
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash
+    url_for, session, flash, make_response
 )
 from flask_session import Session
 
 from utils.password_validator import validate_password
-from utils.email_sender import send_2fa_email, send_unlawful_login_email
-from utils.device_fingerprint import get_device_info
-from utils.keystroke_processor import compare_profiles, save_keystroke_sample
+from utils.email_sender import (
+    send_2fa_email, send_unlawful_login_email,
+    send_security_alert_email, send_confirm_identity_email
+)
+from utils.device_fingerprint import (
+    get_device_info, generate_fingerprint_hash, generate_device_token,
+    find_device, repair_device_connection, create_device,
+    increment_device_login_count
+)
+from utils.agent_keystroke import compare_profiles, save_keystroke_sample
 
 # ── App setup
 
@@ -38,6 +45,8 @@ LOGINS_CSV      = os.path.join(DATA_DIR, 'logins.csv')
 KEYSTROKES_CSV  = os.path.join(DATA_DIR, 'keystrokes.csv')
 TWO_FA_CSV      = os.path.join(DATA_DIR, '2fa_codes.csv')
 SESSIONS_CSV    = os.path.join(DATA_DIR, 'sessions.csv')
+DEVICES_CSV     = os.path.join(DATA_DIR, 'devices.csv')
+SECURITY_CSV = os.path.join(DATA_DIR, 'security_events.csv')
 
 # ── CSV helpers 
 
@@ -52,13 +61,18 @@ def ensure_csv(path, headers):
 def init_csv_files():
     ensure_csv(USERS_CSV,      ['user_id', 'email', 'username', 'password_hash',
                                  'name', 'surname', 'phone', 'keystroke_enabled',
-                                 'login_count', 'created_at'])
+                                 'created_at'])
     ensure_csv(LOGINS_CSV,     ['login_id', 'user_id', 'timestamp', 'device_info',
                                  'location', 'status'])
     ensure_csv(KEYSTROKES_CSV, ['sample_id', 'user_id', 'login_id', 'keystroke_json',
                                  'recorded_at'])
     ensure_csv(TWO_FA_CSV,     ['session_id', 'code', 'expires_at'])
     ensure_csv(SESSIONS_CSV,   ['session_id', 'user_id', 'status', 'created_at'])
+    ensure_csv(DEVICES_CSV,    ['device_id', 'user_id', 'fingerprint_hash', 'token',
+                                 'first_seen', 'last_seen', 'login_count', 'enrolled'])
+    ensure_csv(SECURITY_CSV, ['event_id', 'user_id', 'device_id', 'event_type',
+                           'timestamp', 'details', 'confirm_token',
+                           'token_expires_at', 'resolved'])
 
 # Run on startup
 init_csv_files()
@@ -98,11 +112,62 @@ def find_user_by_id(user_id):
         return row.iloc[0].to_dict() if not row.empty else None
     except Exception:
         return None
+    
 
-def increment_login_count(user_id):
-    df = pd.read_csv(USERS_CSV)
-    df.loc[df['user_id'] == user_id, 'login_count'] += 1
-    df.to_csv(USERS_CSV, index=False)
+    # pt identificarea tioului de device, in emailul de alerta
+def format_device_info(device_info_str):
+    """
+    Transforma string-ul brut de device info intr-un text lizibil pentru email.
+    Extrage: sistem de operare, browser, rezolutie, timezone.
+    """
+    try:
+        # device_info_str e rezultatul lui str(dict), il convertim inapoi
+        import ast
+        info = ast.literal_eval(device_info_str)
+    except Exception:
+        return device_info_str  # fallback: returnam ce avem
+
+    ua = info.get('userAgent', '')
+
+    # detectam OS din User-Agent
+    if 'Windows NT 10' in ua:
+        os_name = 'Windows 10/11'
+    elif 'Windows NT 6' in ua:
+        os_name = 'Windows 7/8'
+    elif 'Mac OS X' in ua:
+        os_name = 'macOS'
+    elif 'Android' in ua:
+        os_name = 'Android'
+    elif 'iPhone' in ua or 'iPad' in ua:
+        os_name = 'iOS'
+    elif 'Linux' in ua:
+        os_name = 'Linux'
+    else:
+        os_name = 'Necunoscut'
+
+    # detectam browser-ul
+    if 'Edg/' in ua:
+        browser = 'Microsoft Edge'
+    elif 'Chrome/' in ua:
+        browser = 'Google Chrome'
+    elif 'Firefox/' in ua:
+        browser = 'Mozilla Firefox'
+    elif 'Safari/' in ua and 'Chrome' not in ua:
+        browser = 'Safari'
+    else:
+        browser = 'Necunoscut'
+
+    width    = info.get('screenWidth', '?')
+    height   = info.get('screenHeight', '?')
+    timezone = info.get('timezone', 'Necunoscuta')
+
+    return (
+        f"Sistem de operare: {os_name}<br>"
+        f"Browser: {browser}<br>"
+        f"Rezolutie ecran: {width}×{height}<br>"
+        f"Fus orar: {timezone}"
+    )
+
 
 def append_row(path, row_dict):
     with open(path, 'a', newline='', encoding='utf-8') as f:
@@ -182,7 +247,6 @@ def register_step2():
         'surname':           surname,
         'phone':             phone,
         'keystroke_enabled': keystroke_enabled,
-        'login_count':       0,
         'created_at':        now,
     })
 
@@ -212,43 +276,77 @@ def register_step2():
 def login():
     if request.method == 'GET':
         return render_template('login.html')
-
     identifier = request.form.get('identifier', '').strip()
     password   = request.form.get('password', '')
     ks_raw     = request.form.get('keystrokes_data', '[]')
-
     user = find_user_by_identifier(identifier)
-
-    # --- verify password ---
     if not user or not bcrypt.checkpw(
         password.encode('utf-8'),
         user['password_hash'].encode('utf-8')
     ):
+        # incrementam counter-ul de parole gresite in session
+        session['failed_password_attempts'] = session.get('failed_password_attempts', 0) + 1
+        pw_attempts = session['failed_password_attempts']
+
+        # daca userul exista dar parola e gresita, logam in security_events
+        if user:
+            append_row(SECURITY_CSV, {
+                'event_id':         str(uuid.uuid4()),
+                'user_id':          user['user_id'],
+                'device_id':        '',
+                'event_type':       'failed_password',
+                'timestamp':        datetime.utcnow().isoformat(),
+                'details':          f'attempt {pw_attempts}',
+                'confirm_token':    '',
+                'token_expires_at': '',
+                'resolved':         0,
+            })
+            # la 3 parole gresite consecutive, trimitem email de alerta
+            if pw_attempts >= 3:
+                send_security_alert_email(
+                    user['email'], pw_attempts,
+                    datetime.utcnow().isoformat()
+                )
+
         flash('Email/username sau parola incorecta.', 'error')
         return render_template('login.html')
 
-    # --- get device info for session logging ---
-    device_info = get_device_info(request)
+    # parola e corecta — retinem daca au existat incercari esuate anterior
+    had_failed_password = session.get('failed_password_attempts', 0) >= 1
+    session.pop('failed_password_attempts', None)
 
-    # --- generate and send 2FA code ---
+    device_info_dict = get_device_info(request)
+    fingerprint      = generate_fingerprint_hash(device_info_dict)
+    incoming_token   = request.form.get('device_token', '').strip()
+
+    status, device = find_device(user['user_id'], fingerprint, incoming_token, DEVICES_CSV)
+
+    if status == 'new_device':
+        new_token = generate_device_token()
+        device    = create_device(user['user_id'], fingerprint, new_token, DEVICES_CSV)
+        session['new_device_token'] = new_token
+    elif status in ('browser_updated', 'token_cleared'):
+        new_token = generate_device_token() if status == 'token_cleared' else None
+        repair_device_connection(device, status, fingerprint, new_token, DEVICES_CSV)
+        if status == 'token_cleared':
+            session['new_device_token'] = new_token
+
     code       = generate_2fa_code()
     session_id = str(uuid.uuid4())
     expires_at = (datetime.utcnow() + timedelta(minutes=4)).isoformat()
-
     append_row(TWO_FA_CSV, {
         'session_id': session_id,
         'code':       code,
         'expires_at': expires_at,
     })
-
     send_2fa_email(user['email'], code)
-
-    # --- store login context in session for 2FA route to use ---
-    session['pending_user_id']    = user['user_id']
-    session['pending_session_id'] = session_id
-    session['pending_keystrokes'] = ks_raw
-    session['pending_device']     = device_info
-
+    session['pending_user_id']         = user['user_id']
+    session['pending_session_id']       = session_id
+    session['pending_keystrokes']       = ks_raw
+    session['pending_device_id']        = device['device_id']
+    session['pending_device_info']      = str(device_info_dict)
+    session['twofa_attempts']           = 0
+    session['had_failed_password']      = had_failed_password
     return redirect(url_for('two_fa'))
 
 
@@ -290,6 +388,41 @@ def two_fa():
 
     # --- check code ---
     if entered_code != str(record['code']):
+        session['twofa_attempts'] = session.get('twofa_attempts', 0) + 1
+        attempts = session['twofa_attempts']
+
+        append_row(SECURITY_CSV, {
+            'event_id':         str(uuid.uuid4()),
+            'user_id':          session.get('pending_user_id', ''),
+            'device_id':        session.get('pending_device_id', ''),
+            'event_type':       'failed_2fa',
+            'timestamp':        datetime.utcnow().isoformat(),
+            'details':          f'attempt {attempts}',
+            'confirm_token':    '',
+            'token_expires_at': '',
+            'resolved':         0,
+        })
+
+        if attempts == 2:
+            user_temp = find_user_by_id(session.get('pending_user_id'))
+            if user_temp:
+                send_security_alert_email(
+                    user_temp['email'], attempts,
+                    datetime.utcnow().isoformat()
+                )
+
+        if attempts >= 3:
+            df = df[df['session_id'] != session_id]
+            df.to_csv(TWO_FA_CSV, index=False)
+            session.pop('pending_user_id', None)
+            session.pop('pending_session_id', None)
+            session.pop('pending_keystrokes', None)
+            session.pop('pending_device_id', None)
+            session.pop('pending_device_info', None)
+            session.pop('twofa_attempts', None)
+            flash('Prea multe incercari. Te rugam sa te autentifici din nou.', 'error')
+            return redirect(url_for('login'))
+
         flash('Cod incorect.', 'error')
         return render_template('2fa.html')
 
@@ -297,67 +430,154 @@ def two_fa():
     df = df[df['session_id'] != session_id]
     df.to_csv(TWO_FA_CSV, index=False)
 
-    # --- resolve user and keystroke data ---
+
     user_id     = session.get('pending_user_id')
     ks_raw      = session.get('pending_keystrokes', '[]')
-    device_info = session.get('pending_device', '')
+    device_id   = session.get('pending_device_id')
+    device_info = session.get('pending_device_info', '')
     user        = find_user_by_id(user_id)
     now         = datetime.utcnow().isoformat()
     login_id    = str(uuid.uuid4())
-    login_status = 'active'
+    attempts             = session.get('twofa_attempts', 0)
+    had_failed_password  = session.get('had_failed_password', False)
 
-    # --- keystroke check (only if user has security enabled) ---
+    # verificam si istoricul din security_events: daca userul a avut cel putin
+    # 3 failed_2fa in trecut (din sesiuni anterioare), login-ul curent e tot suspicious
+    historical_suspicious = False
+    try:
+        df_sec = pd.read_csv(SECURITY_CSV)
+        failed_count = len(df_sec[
+            (df_sec['user_id'] == user_id) &
+            (df_sec['event_type'] == 'failed_2fa')
+        ])
+        if failed_count >= 3:
+            historical_suspicious = True
+    except Exception:
+        pass
+
+    login_status = (
+        'active_flagged_suspicious'
+        if (attempts >= 1 or had_failed_password or historical_suspicious)
+        else 'active'
+    )
+
+    try:
+        df_dev  = pd.read_csv(DEVICES_CSV)
+        dev_row = df_dev[df_dev['device_id'] == device_id]
+        device_login_count = int(dev_row.iloc[0]['login_count']) if not dev_row.empty else 0
+    except Exception:
+        device_login_count = 0
+
     if user and int(user['keystroke_enabled']) == 1:
-        login_count = int(user['login_count'])
-
-        if login_count < ENROLLMENT_LOGINS:
-            # Enrollment mode: save sample, always let through
+        if device_login_count < ENROLLMENT_LOGINS:
             save_keystroke_sample(KEYSTROKES_CSV, user_id, login_id, ks_raw)
-
         else:
-            # Scoring mode: compare against stored profile
             match = compare_profiles(KEYSTROKES_CSV, user_id, ks_raw)
             if not match:
                 login_status = 'unlawful'
-                send_unlawful_login_email(user['email'], device_info, now)
+                send_unlawful_login_email(user['email'], format_device_info(device_info), now)
 
-    # --- save login record ---
     append_row(LOGINS_CSV, {
         'login_id':    login_id,
         'user_id':     user_id,
         'timestamp':   now,
         'device_info': device_info,
-        'location':    '',          # location enrichment: future task
+        'location':    '',
         'status':      login_status,
     })
-
-    # --- save keystroke sample for enrollment logins ---
-    if user and int(user['keystroke_enabled']) == 1:
-        if int(user['login_count']) < ENROLLMENT_LOGINS:
-            pass  # already saved above
-
-    # --- save active session record ---
     append_row(SESSIONS_CSV, {
         'session_id': login_id,
         'user_id':    user_id,
         'status':     login_status,
         'created_at': now,
     })
+    
+    if login_status == 'active_flagged_suspicious':
+        confirm_token = str(uuid.uuid4())
+        token_expires = (datetime.utcnow() + timedelta(hours=24)).isoformat()
+        confirm_url   = url_for('confirm_identity', token=confirm_token, _external=True)
 
-    # --- increment login count ---
-    increment_login_count(user_id)
+        append_row(SECURITY_CSV, {
+            'event_id':         str(uuid.uuid4()),
+            'user_id':          user_id,
+            'device_id':        device_id,
+            'event_type':       'suspicious_login',
+            'timestamp':        now,
+            'details':          f'{attempts} failed attempts before success',
+            'confirm_token':    confirm_token,
+            'token_expires_at': token_expires,
+            'resolved':         0,
+        })
 
-    # --- set user as logged in ---
+        if user:
+            send_confirm_identity_email(user['email'], confirm_url, now, format_device_info(device_info))
+
+    if device_id:
+        increment_device_login_count(device_id, DEVICES_CSV)
+
+    new_token = session.pop('new_device_token', None)
     session.pop('pending_user_id', None)
     session.pop('pending_session_id', None)
     session.pop('pending_keystrokes', None)
-    session.pop('pending_device', None)
-
+    session.pop('pending_device_id', None)
+    session.pop('pending_device_info', None)
+    session.pop('twofa_attempts', None)
+    session.pop('had_failed_password', None)
     session['user_id']  = user_id
     session['username'] = user['username'] if user else ''
     session.permanent   = True
 
-    return redirect(url_for('dashboard'))
+    response = make_response(redirect(url_for('dashboard')))
+    if new_token:
+        response.set_cookie(
+            'device_token',
+            new_token,
+            max_age=60*60*24*365,
+            httponly=False,
+            samesite='Lax'
+        )
+    return response
+
+
+# ── CONFIRM IDENTITY
+
+@app.route('/confirm-identity', methods=['GET'])
+def confirm_identity():
+    token  = request.args.get('token', '').strip()
+    action = request.args.get('response', '').strip()
+
+    if not token:
+        return render_template('confirm_identity.html', valid=False, token='')
+
+    try:
+        df  = pd.read_csv(SECURITY_CSV)
+        row = df[df['confirm_token'] == token]
+    except Exception:
+        return render_template('confirm_identity.html', valid=False, token='')
+
+    if row.empty:
+        return render_template('confirm_identity.html', state='invalid')
+
+    record = row.iloc[0]
+
+    if int(record['resolved']) != 0:
+        return render_template('confirm_identity.html', state='invalid')
+
+    expires_at = datetime.fromisoformat(record['token_expires_at'])
+    if datetime.utcnow() > expires_at:
+        return render_template('confirm_identity.html', state='invalid')
+
+    if action == 'confirm':
+        df.loc[df['confirm_token'] == token, 'resolved'] = 1
+        df.to_csv(SECURITY_CSV, index=False)
+        return render_template('confirm_identity.html', state='confirmed')
+
+    if action == 'deny':
+        df.loc[df['confirm_token'] == token, 'resolved'] = -1
+        df.to_csv(SECURITY_CSV, index=False)
+        return render_template('confirm_identity.html', state='denied')
+
+    return render_template('confirm_identity.html', state='pending', token=token)
 
 
 # ── DASHBOARD

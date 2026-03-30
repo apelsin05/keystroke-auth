@@ -1,0 +1,30 @@
+
+    .confirm-card {
+      max-width: 480px;
+      margin: 80px auto;
+      background: rgba(53, 40, 111, 0.5);
+      border-radius: 20px;
+      padding: 40px;
+      text-align: center;
+      color: white;
+      font-family: "Times New Roman", Times, serif;
+    }
+    .confirm-card h1 { font-size: 1.6rem; margin-bottom: 12px; }
+    .confirm-card p  { color: #ccc; margin-bottom: 32px; line-height: 1.6; }
+    .btn-yes {
+      display: inline-block;
+      background: #48baf3; color: #35286f; font-weight: bold;
+      padding: 12px 32px; border-radius: 50px; text-decoration: none;
+      margin-right: 12px; font-family: "Times New Roman", Times, serif;
+    }
+    .btn-no {
+      display: inline-block;
+      background: transparent; color: #f37448; border: 2px solid #f37448;
+      padding: 10px 32px; border-radius: 50px; text-decoration: none;
+      font-family: "Times New Roman", Times, serif;
+    }
+    .btn-yes:hover, .btn-no:hover { opacity: 0.85; }
+    .flash { padding: 10px 20px; border-radius: 50px; margin-bottom: 20px;
+             font-size: 0.9rem; }
+    .flash-success { background: rgba(126,255,154,0.15); color: #7eff9a; }
+    .flash-error   { background: rgba(243,116,72,0.15);  color: #f37448; }

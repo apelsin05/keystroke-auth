@@ -70,6 +70,13 @@
         document.getElementById('twofa-form').submit();
       }, 500);
     }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      ['n1','n2','n3','n4','n5','n6'].forEach(function(id) {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('n1').focus();
+    });
   </script>
 
 </body>
