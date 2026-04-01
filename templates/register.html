@@ -26,7 +26,10 @@
         <div class="form-row">
           <label for="password">Parola</label>
           <div class="password-wrapper">
-            <input type="password" id="password" name="password" placeholder="Introdu parola" required />
+            <input type="password" id="password" name="password" placeholder="Introdu parola"
+              autocomplete="new-password"
+              readonly
+              onfocus="this.removeAttribute('readonly')" required />
             <span class="toggle-password" onclick="togglePassword('password', this)">👁</span>
           </div>
         </div>

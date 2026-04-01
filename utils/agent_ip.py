@@ -9,6 +9,7 @@ KNOWN_IPS_HEADERS = [
 ]
 
 def get_ip_info(ip_address):
+    print(f"[IP DEBUG] ip_address primit: '{ip_address}'")
     if ip_address in ('127.0.0.1', '::1', 'localhost'):
         return {'country': 'LOCAL', 'city': 'LOCAL', 'isp': 'LOCAL'}
     try:

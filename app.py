@@ -26,6 +26,7 @@ from utils.device_fingerprint import (
 )
 from utils.agent_keystroke import compare_profiles, save_keystroke_sample
 from utils.agent_ip import get_ip_info, score_ip, record_ip
+from utils.orchestrator import decide
 
 # ── App setup
 
@@ -469,6 +470,22 @@ def two_fa():
     ip_info    = get_ip_info(ip_address)
     ip_score   = score_ip(user_id, ip_address, KNOWN_IPS_CSV)
     record_ip(user_id, ip_address, ip_info, KNOWN_IPS_CSV)
+
+    # implementare scor de risc
+    keystroke_score = 1.0  # stub pana la implementarea finala a keystroke capture
+    result          = decide(keystroke_score, ip_score)
+    print(f"[DEBUG] IP score: {ip_score}, Decision: {result}") #pt debug in consola
+    decision        = result['decision']
+
+    # daca decizia e re-enrollment, resetam contorul dispozitivului
+    if decision == '2fa_reenrollment':
+        try:
+            df_dev = pd.read_csv(DEVICES_CSV)
+            df_dev.loc[df_dev['device_id'] == device_id, 'login_count'] = 0
+            df_dev.loc[df_dev['device_id'] == device_id, 'enrolled']    = 0
+            df_dev.to_csv(DEVICES_CSV, index=False)
+        except Exception:
+            pass
 
     try:
         df_dev  = pd.read_csv(DEVICES_CSV)
