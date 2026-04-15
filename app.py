@@ -67,8 +67,10 @@ def init_csv_files():
                                  'created_at'])
     ensure_csv(LOGINS_CSV,     ['login_id', 'user_id', 'timestamp', 'device_info',
                                  'location', 'status'])
-    ensure_csv(KEYSTROKES_CSV, ['sample_id', 'user_id', 'login_id', 'keystroke_json',
-                                 'recorded_at'])
+    ensure_csv(KEYSTROKES_CSV, ['sample_id', 'user_id', 'device_id', 'login_id',
+                             'final_sequence_json', 'auxiliary_json',
+                             'has_backspace', 'confidence', 'is_truncated',
+                             'recorded_at'])
     ensure_csv(TWO_FA_CSV,     ['session_id', 'code', 'expires_at'])
     ensure_csv(SESSIONS_CSV,   ['session_id', 'user_id', 'status', 'created_at'])
     ensure_csv(DEVICES_CSV,    ['device_id', 'user_id', 'fingerprint_hash', 'token',
@@ -496,7 +498,7 @@ def two_fa():
 
     if user and int(user['keystroke_enabled']) == 1:
         if device_login_count < ENROLLMENT_LOGINS:
-            save_keystroke_sample(KEYSTROKES_CSV, user_id, login_id, ks_raw)
+            save_keystroke_sample(KEYSTROKES_CSV, user_id, device_id, login_id, ks_raw)
         else:
             match = compare_profiles(KEYSTROKES_CSV, user_id, ks_raw)
             if not match:
