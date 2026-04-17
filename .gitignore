@@ -2,7 +2,9 @@
 .venv/
 
 # Flask session files
-data/sessions/
+data/
+flask_session/
+models/
 
 # Python cache
 __pycache__/
@@ -17,4 +19,3 @@ __pycache__/
 # CSV data files (contain user data)
 data/*.csv
 
-.env
