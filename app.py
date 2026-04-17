@@ -257,16 +257,16 @@ def register_step2():
         'created_at':        now,
     })
 
-    # Save registration keystroke sample if security is enabled
-    if keystroke_enabled:
-        sample_id = str(uuid.uuid4())
-        append_row(KEYSTROKES_CSV, {
-            'sample_id':     sample_id,
-            'user_id':       user_id,
-            'login_id':      'registration',
-            'keystroke_json': session.get('reg_keystrokes', '[]'),
-            'recorded_at':   now,
-        })
+    # # Save registration keystroke sample if security is enabled
+    # if keystroke_enabled:
+    #     sample_id = str(uuid.uuid4())
+    #     append_row(KEYSTROKES_CSV, {
+    #         'sample_id':     sample_id,
+    #         'user_id':       user_id,
+    #         'login_id':      'registration',
+    #         'keystroke_json': session.get('reg_keystrokes', '[]'),
+    #         'recorded_at':   now,
+    #     })
 
     # Clear registration data from session
     session.pop('reg_email', None)
