@@ -10,7 +10,7 @@ import bcrypt
 import pandas as pd
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, make_response
+    url_for, session, flash, make_response, redirect, url_for
 )
 from flask_session import Session
 
@@ -180,6 +180,12 @@ def append_row(path, row_dict):
     with open(path, 'a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=row_dict.keys())
         writer.writerow(row_dict)
+
+# ── Routes
+
+@app.route("/")
+def home():
+    return redirect(url_for("login"))
 
 # ── REGISTER step 1 
 
@@ -644,4 +650,4 @@ def logout():
 # ── Entry point 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
