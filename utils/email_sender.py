@@ -3,18 +3,21 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+from pathlib import Path
  
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 
 load_dotenv(dotenv_path=ENV_PATH)
 
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "").strip()
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "").strip()
 
 
 # load_dotenv()
  
-EMAIL_ADDRESS  = os.getenv('EMAIL_ADDRESS')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+# EMAIL_ADDRESS  = os.getenv('EMAIL_ADDRESS')
+# EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
 # def _send(to_email, subject, body_html):
 #     """
