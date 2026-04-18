@@ -1,30 +1,125 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
-    .confirm-card {
-      max-width: 480px;
-      margin: 80px auto;
-      background: rgba(53, 40, 111, 0.5);
-      border-radius: 20px;
-      padding: 40px;
-      text-align: center;
-      color: white;
-      font-family: "Times New Roman", Times, serif;
-    }
-    .confirm-card h1 { font-size: 1.6rem; margin-bottom: 12px; }
-    .confirm-card p  { color: #ccc; margin-bottom: 32px; line-height: 1.6; }
-    .btn-yes {
-      display: inline-block;
-      background: #48baf3; color: #35286f; font-weight: bold;
-      padding: 12px 32px; border-radius: 50px; text-decoration: none;
-      margin-right: 12px; font-family: "Times New Roman", Times, serif;
-    }
-    .btn-no {
-      display: inline-block;
-      background: transparent; color: #f37448; border: 2px solid #f37448;
-      padding: 10px 32px; border-radius: 50px; text-decoration: none;
-      font-family: "Times New Roman", Times, serif;
-    }
-    .btn-yes:hover, .btn-no:hover { opacity: 0.85; }
-    .flash { padding: 10px 20px; border-radius: 50px; margin-bottom: 20px;
-             font-size: 0.9rem; }
-    .flash-success { background: rgba(126,255,154,0.15); color: #7eff9a; }
-    .flash-error   { background: rgba(243,116,72,0.15);  color: #f37448; }
+:root {
+  --primary:   #c77dbe;
+  --primary-2: #a985d1;
+  --fg:        #2d2633;
+  --muted:     #8e7a94;
+  --border:    rgba(199,125,190,0.28);
+  --shadow-lg: 0 20px 56px rgba(199,125,190,0.18);
+  --page-bg:   linear-gradient(135deg,#fdfcfc 0%,rgba(232,212,242,0.28) 55%,rgba(255,201,212,0.22) 100%);
+}
+
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+
+body {
+  font-family:'Plus Jakarta Sans',system-ui,sans-serif;
+  color:var(--fg);
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:2rem 1rem;
+  background:var(--page-bg);
+}
+
+.confirm-card {
+  background:#fff;
+  border-radius:28px;
+  border:2.5px solid var(--border);
+  box-shadow:var(--shadow-lg);
+  padding:2.8rem 2.5rem;
+  width:100%;
+  max-width:480px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:0;
+  text-align:center;
+}
+
+.confirm-icon {
+  width:3.5rem;
+  height:3.5rem;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  margin-bottom:1.25rem;
+  font-size:1.4rem;
+}
+
+.confirm-icon.warn  { background:linear-gradient(135deg,#f59e0b,#f97316); box-shadow:0 4px 14px rgba(245,158,11,0.4); }
+.confirm-icon.ok    { background:linear-gradient(135deg,#22c55e,#16a34a); box-shadow:0 4px 14px rgba(34,197,94,0.4); }
+.confirm-icon.bad   { background:linear-gradient(135deg,#c77dbe,#a985d1); box-shadow:0 4px 14px rgba(199,125,190,0.4); }
+.confirm-icon.gone  { background:linear-gradient(135deg,#94a3b8,#64748b); box-shadow:0 4px 14px rgba(148,163,184,0.4); }
+
+.confirm-card h1 {
+  font-size:1.5rem;
+  font-weight:700;
+  color:var(--fg);
+  margin-bottom:0.6rem;
+  line-height:1.25;
+}
+
+.confirm-card p {
+  font-size:0.9rem;
+  color:var(--muted);
+  line-height:1.6;
+  margin-bottom:2rem;
+  max-width:340px;
+}
+
+.btn-row {
+  display:flex;
+  gap:0.75rem;
+  flex-wrap:wrap;
+  justify-content:center;
+  width:100%;
+}
+
+.btn-yes {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:3rem;
+  padding:0 1.8rem;
+  background:var(--primary);
+  color:#fff;
+  font-family:inherit;
+  font-size:0.9375rem;
+  font-weight:600;
+  border:none;
+  border-radius:50px;
+  cursor:pointer;
+  box-shadow:0 4px 16px rgba(199,125,190,0.35);
+  transition:opacity .2s,transform .15s;
+  text-decoration:none;
+}
+.btn-yes:hover { opacity:.9; transform:translateY(-1px); }
+
+.btn-no {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:3rem;
+  padding:0 1.8rem;
+  background:transparent;
+  color:#c0212d;
+  font-family:inherit;
+  font-size:0.9375rem;
+  font-weight:600;
+  border:2px solid rgba(192,33,45,0.45);
+  border-radius:50px;
+  cursor:pointer;
+  transition:background .2s;
+  text-decoration:none;
+}
+.btn-no:hover { background:rgba(192,33,45,0.07); }
+
+/* flash messages */
+.flash-wrap { width:100%; display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1.2rem; }
+.flash { padding:0.7rem 1.1rem; border-radius:50px; font-size:0.85rem; font-weight:500; }
+.flash-error   { background:rgba(230,57,70,0.1); color:#c0212d; border:1.5px solid rgba(230,57,70,0.25); }
+.flash-success { background:rgba(34,197,94,0.1); color:#15803d; border:1.5px solid rgba(34,197,94,0.25); }

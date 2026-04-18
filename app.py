@@ -176,6 +176,49 @@ def format_device_info(device_info_str):
     )
 
 
+def format_device_info_text(device_info_str):
+    """
+    Versiune simpla a lui format_device_info — returneaza text curat,
+    folosita in tabelele din dashboard (nu in emailuri).
+    Ex: "Chrome · Windows 10/11"
+    """
+    try:
+        import ast
+        info = ast.literal_eval(device_info_str)
+    except Exception:
+        return "Necunoscut"
+
+    ua = info.get('userAgent', '')
+
+    if 'Windows NT 10' in ua or 'Windows NT 11' in ua:
+        os_name = 'Windows 10/11'
+    elif 'Windows NT 6' in ua:
+        os_name = 'Windows 7/8'
+    elif 'Mac OS X' in ua:
+        os_name = 'macOS'
+    elif 'Android' in ua:
+        os_name = 'Android'
+    elif 'iPhone' in ua or 'iPad' in ua:
+        os_name = 'iOS'
+    elif 'Linux' in ua:
+        os_name = 'Linux'
+    else:
+        os_name = 'Necunoscut'
+
+    if 'Edg/' in ua:
+        browser = 'Edge'
+    elif 'Chrome/' in ua:
+        browser = 'Chrome'
+    elif 'Firefox/' in ua:
+        browser = 'Firefox'
+    elif 'Safari/' in ua and 'Chrome' not in ua:
+        browser = 'Safari'
+    else:
+        browser = 'Browser necunoscut'
+
+    return f"{browser} · {os_name}"
+
+
 def append_row(path, row_dict):
     with open(path, 'a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=row_dict.keys())
@@ -625,7 +668,69 @@ def dashboard():
     if not user:
         return redirect(url_for('login'))
 
-    return render_template('dashboard.html', user=user)
+    user_id = session['user_id']
+
+    # Istoricul logarilor (logins.csv, filtrat pe user_id, ordine descrescatoare)
+    logins = []
+    try:
+        df_logins = pd.read_csv(LOGINS_CSV)
+        df_user_logins = df_logins[df_logins['user_id'] == user_id].copy()
+        df_user_logins = df_user_logins.sort_values('timestamp', ascending=False)
+        for _, row in df_user_logins.iterrows():
+            loc = str(row.get('location', ''))
+            logins.append({
+                'timestamp': str(row.get('timestamp', ''))[:16].replace('T', ' '),
+                'location':  loc if loc not in ('', 'nan', 'None, None', 'None') else 'N/A',
+                'device':    format_device_info_text(str(row.get('device_info', ''))),
+                'status':    str(row.get('status', 'active')),
+            })
+    except Exception:
+        pass
+
+    # Dispozitivele asociate (devices.csv, filtrat pe user_id)
+    devices = []
+    try:
+        df_devices = pd.read_csv(DEVICES_CSV)
+        df_user_devices = df_devices[df_devices['user_id'] == user_id].copy()
+        df_user_devices = df_user_devices.sort_values('last_seen', ascending=False)
+        for _, row in df_user_devices.iterrows():
+            login_count = int(row.get('login_count', 0))
+            enrolled    = int(row.get('enrolled', 0))
+            devices.append({
+                'first_seen':   str(row.get('first_seen', ''))[:16].replace('T', ' '),
+                'last_seen':    str(row.get('last_seen', ''))[:16].replace('T', ' '),
+                'login_count':  login_count,
+                'enrolled':     enrolled,
+                'progress_pct': min(int(login_count / 20 * 100), 100),
+            })
+    except Exception:
+        pass
+
+    return render_template('dashboard.html', user=user, logins=logins, devices=devices,
+                           enrollment_target=20)
+
+
+@app.route('/settings/toggle-keystroke', methods=['POST'])
+def toggle_keystroke():
+    """Activeaza / dezactiveaza autentificarea comportamentala."""
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    try:
+        df = pd.read_csv(USERS_CSV)
+        current = int(df.loc[df['user_id'] == user_id, 'keystroke_enabled'].values[0])
+        new_val = 0 if current == 1 else 1
+        df.loc[df['user_id'] == user_id, 'keystroke_enabled'] = new_val
+        df.to_csv(USERS_CSV, index=False)
+        if new_val == 1:
+            flash('Autentificarea comportamentala a fost activata.', 'success')
+        else:
+            flash('Autentificarea comportamentala a fost dezactivata.', 'success')
+    except Exception:
+        flash('Eroare la actualizarea setarilor.', 'error')
+
+    return redirect(url_for('dashboard'))
 
 
 # ── LOGOUT 

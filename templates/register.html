@@ -1,120 +1,145 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ro">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>Inregistrare</title>
-  <meta name="description" content="Pagina de inregistrare." />
-  <link rel="stylesheet" href="../static/css/style.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
 </head>
 <body>
 
-  <div class="container">
+<div class="split-container">
 
-    <div class="left-section">
-      <h1 class="left-title">Creeaza-ti un cont:</h1>
+  <!-- LEFT PANEL -->
+  <div class="split-left">
+    <div class="split-left-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a5 5 0 1 0 5 5A5 5 0 0 0 12 2z"/><path d="M20 21a8 8 0 1 0-16 0"/>
+      </svg>
     </div>
+    <h1 class="split-left-title">Creeaza-ti<br>un cont</h1>
+    <p class="split-left-sub">Sistemul tau de autentificare<br>bazat pe tastatura</p>
+  </div>
 
-    <div class="right-section">
+  <!-- RIGHT PANEL -->
+  <div class="split-right">
+    <div class="split-form">
+
+      <div class="split-form-header">
+        <h2>Inregistrare</h2>
+        <p>Pasul 1 din 2 — Date de acces</p>
+      </div>
+
+      <!-- flash messages -->
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-wrap">
+            {% for category, message in messages %}
+              <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
       <form method="POST" action="/register/step1">
 
-        <div class="form-row">
+        <!-- email -->
+        <div class="field" style="margin-bottom:1.1rem">
           <label for="email">Email</label>
-          <input type="email" id="email" name="email" placeholder="popescu@domeniu.com (.ro, .gr, etc)" required />
+          <div class="input-wrap">
+            <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+            </svg>
+            <input type="email" id="email" name="email" placeholder="popescu@domeniu.com" required/>
+          </div>
         </div>
 
-        <div class="form-row">
+        <!-- password -->
+        <div class="field" style="margin-bottom:0.75rem">
           <label for="password">Parola</label>
-          <div class="password-wrapper">
-            <input type="password" id="password" name="password" placeholder="Introdu parola"
+          <div class="input-wrap">
+            <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="password" name="password"
+              placeholder="Introdu parola"
               autocomplete="new-password"
               readonly
-              onfocus="this.removeAttribute('readonly')" required />
-            <span class="toggle-password" onclick="togglePassword('password', this)">👁</span>
+              onfocus="this.removeAttribute('readonly')"
+              required/>
+            <span class="toggle-password" onclick="togglePassword('password',this)">👁</span>
           </div>
         </div>
 
-        <!-- live password constraint list -->
-        <div class="form-row constraints-row">
-          <ul class="constraints" id="constraints">
-            <li id="c-length">* Minim 8 caractere</li>
-            <li id="c-upper">* O litera mare</li>
-            <li id="c-lower">* O litera mica</li>
-            <li id="c-digit">* O cifra</li>
-            <li id="c-special">* Un caracter special (!@#$...)</li>
-          </ul>
-        </div>
+        <!-- live constraints -->
+        <ul class="constraints" id="constraints" style="margin-bottom:1.1rem">
+          <li id="c-length">Minim 8 caractere</li>
+          <li id="c-upper">O litera mare</li>
+          <li id="c-lower">O litera mica</li>
+          <li id="c-digit">O cifra</li>
+          <li id="c-special">Un caracter special (!@#$...)</li>
+        </ul>
 
-        <div class="form-row">
+        <!-- confirm password -->
+        <div class="field" style="margin-bottom:1.5rem">
           <label for="confirm-password">Confirma parola</label>
-          <div class="password-wrapper">
+          <div class="input-wrap">
+            <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
             <input type="password" id="confirm-password" name="confirm-password"
+              placeholder="Confirma parola"
               autocomplete="new-password"
               readonly
-              onfocus="this.removeAttribute('readonly')" placeholder="Confirma parola" required />
-            <span class="toggle-password" onclick="togglePassword('confirm-password', this)">👁</span>
+              onfocus="this.removeAttribute('readonly')"
+              required/>
+            <span class="toggle-password" onclick="togglePassword('confirm-password',this)">👁</span>
           </div>
         </div>
 
-        <!-- hidden field: datele legate de keystroke vor fi trimise aici de js inainte de submit -->
-        <input type="hidden" id="keystrokes_data" name="keystrokes_data" />
+        <!-- hidden keystroke field -->
+        <input type="hidden" id="keystrokes_data" name="keystrokes_data"/>
 
-        <div class="form-footer">
-          <span class="auth-link">Ai deja cont? <a href="/login">Autentifica-te</a></span>
-          <button type="submit" id="submit-btn" disabled>Urmatorul →</button>
+        <div class="form-footer-row">
+          <span class="auth-link">Ai cont? <a href="/login">Autentifica-te</a></span>
+          <button type="submit" id="submit-btn" class="btn-primary" disabled>Urmatorul →</button>
         </div>
 
       </form>
     </div>
-
   </div>
+</div>
 
-  <script src="../static/js/keystroke_capture.js"></script>
+<script src="../static/js/keystroke_capture.js"></script>
+<script>
+  function togglePassword(fieldId, icon) {
+    const f = document.getElementById(fieldId);
+    if (f.type === 'password') { f.type = 'text';     icon.textContent = '🙈'; }
+    else                       { f.type = 'password'; icon.textContent = '👁'; }
+  }
 
-  <script>
-    // password show/hide toggle
-    function togglePassword(fieldId, icon) {
-      const field = document.getElementById(fieldId);
-      if (field.type === 'password') {
-        field.type = 'text';
-        icon.textContent = '🙈';
-      } else {
-        field.type = 'password';
-        icon.textContent = '👁';
-      }
+  const passwordInput = document.getElementById('password');
+  const submitBtn     = document.getElementById('submit-btn');
+
+  const rules = {
+    'c-length':  p => p.length >= 8,
+    'c-upper':   p => /[A-Z]/.test(p),
+    'c-lower':   p => /[a-z]/.test(p),
+    'c-digit':   p => /[0-9]/.test(p),
+    'c-special': p => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p),
+  };
+
+  passwordInput.addEventListener('input', function() {
+    const val = this.value;
+    let allMet = true;
+    for (const [id, test] of Object.entries(rules)) {
+      const li = document.getElementById(id);
+      if (test(val)) { li.classList.add('met');    }
+      else           { li.classList.remove('met'); allMet = false; }
     }
-
-    // live constraint validation
-    const passwordInput = document.getElementById('password');
-    const submitBtn = document.getElementById('submit-btn');
-
-    const rules = {
-      'c-length':  p => p.length >= 8,
-      'c-upper':   p => /[A-Z]/.test(p),
-      'c-lower':   p => /[a-z]/.test(p),
-      'c-digit':   p => /[0-9]/.test(p),
-      'c-special': p => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p),
-    };
-
-    passwordInput.addEventListener('input', function() {
-      const val = this.value;
-      let allMet = true;
-
-      for (const [id, test] of Object.entries(rules)) {
-        const li = document.getElementById(id);
-        if (test(val)) {
-          li.textContent = li.textContent.replace('*', '✓');
-          li.classList.add('met');
-        } else {
-          li.textContent = li.textContent.replace('✓', '*');
-          li.classList.remove('met');
-          allMet = false;
-        }
-      }
-
-      submitBtn.disabled = !allMet;
-    });
-  </script>
+    submitBtn.disabled = !allMet;
+  });
+</script>
 
 </body>
 </html>
