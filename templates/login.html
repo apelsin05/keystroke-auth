@@ -1,72 +1,98 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ro">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Login</title>
-  <link rel="stylesheet" href="../static/css/style.css" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Autentificare</title>
+  <link rel="stylesheet" href="../static/css/style.css"/>
 </head>
 <body>
 
-  <div class="container-step2">
+<div class="page-center">
+  <div class="form-card">
 
-    <div class="form-card">
-
-      <h1 class="card-title">Autentificare</h1>
-
-      <form method="POST" action="/login">
-
-        <div class="form-row-vertical">
-          <label for="identifier">Email / Username</label>
-          <input type="text" id="identifier" name="identifier" placeholder="Email sau username" required />
-        </div>
-
-        <div class="form-row-vertical">
-          <label for="password">Parola</label>
-          <div class="password-wrapper">
-            <input type="password" id="password" name="password"
-              autocomplete="new-password"
-              readonly
-              onfocus="this.removeAttribute('readonly')" placeholder="Introduceti parola" required />
-            <span class="toggle-password" onclick="togglePassword('password', this)">👁</span>
-          </div>
-        </div>
-
-        <!-- hidden field: keystroke data injected here by JS before submit -->
-        <input type="hidden" id="keystrokes_data" name="keystrokes_data" />
-
-        <div class="form-footer">
-          <span class="auth-link">Nu ai cont? <a href="/register/step1">Inregistreaza-te</a></span>
-          <input type="hidden" id="device_token"       name="device_token">
-          <input type="hidden" id="device_userAgent"   name="device_userAgent">
-          <input type="hidden" id="device_screenWidth" name="device_screenWidth">
-          <input type="hidden" id="device_screenHeight" name="device_screenHeight">
-          <input type="hidden" id="device_timezone"    name="device_timezone">
-          <input type="hidden" id="device_language"    name="device_language">
-          <input type="hidden" id="device_platform"    name="device_platform">
-          <button type="submit">Intra in cont</button>
-        </div>
-
-      </form>
-
+    <div class="card-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
     </div>
 
+    <div class="card-title">Bun venit inapoi</div>
+    <div class="card-subtitle">Introdu datele pentru a te autentifica</div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-wrap">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <form method="POST" action="/login" style="display:flex;flex-direction:column;gap:1.1rem;width:100%">
+
+      <!-- identifier -->
+      <div class="field">
+        <label for="identifier">Email / Username</label>
+        <div class="input-wrap">
+          <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+          </svg>
+          <input type="text" id="identifier" name="identifier" placeholder="Email sau username" required/>
+        </div>
+      </div>
+
+      <!-- password -->
+      <div class="field">
+        <label for="password">Parola</label>
+        <div class="input-wrap">
+          <svg class="input-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <input type="password" id="password" name="password"
+            placeholder="Introduceti parola"
+            autocomplete="new-password"
+            readonly
+            onfocus="this.removeAttribute('readonly')"
+            required/>
+          <span class="toggle-password" onclick="togglePassword('password',this)">👁</span>
+        </div>
+      </div>
+
+      <!-- hidden fields: keystroke + device fingerprint -->
+      <input type="hidden" id="keystrokes_data"      name="keystrokes_data"/>
+      <input type="hidden" id="device_token"         name="device_token"/>
+      <input type="hidden" id="device_userAgent"     name="device_userAgent"/>
+      <input type="hidden" id="device_screenWidth"   name="device_screenWidth"/>
+      <input type="hidden" id="device_screenHeight"  name="device_screenHeight"/>
+      <input type="hidden" id="device_timezone"      name="device_timezone"/>
+      <input type="hidden" id="device_language"      name="device_language"/>
+      <input type="hidden" id="device_platform"      name="device_platform"/>
+
+      <button type="submit" class="btn-primary" style="width:100%;margin-top:0.25rem">
+        Intra in cont
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+        </svg>
+      </button>
+
+      <div class="auth-link" style="margin-top:0.5rem">
+        Nu ai cont? <a href="/register/step1">Inregistreaza-te</a>
+      </div>
+
+    </form>
   </div>
+</div>
 
-  <script src="../static/js/keystroke_capture.js"></script>
-
-  <script>
-    function togglePassword(fieldId, icon) {
-      const field = document.getElementById(fieldId);
-      if (field.type === 'password') {
-        field.type = 'text';
-        icon.textContent = '🙈';
-      } else {
-        field.type = 'password';
-        icon.textContent = '👁';
-      }
-    }
-  </script>
+<script src="../static/js/keystroke_capture.js"></script>
+<script>
+  function togglePassword(fieldId, icon) {
+    const f = document.getElementById(fieldId);
+    if (f.type === 'password') { f.type = 'text';     icon.textContent = '🙈'; }
+    else                       { f.type = 'password'; icon.textContent = '👁'; }
+  }
+</script>
 
 </body>
 </html>
