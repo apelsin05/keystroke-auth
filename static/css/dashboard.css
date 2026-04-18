@@ -1,0 +1,48 @@
+
+    .section-title {
+      font-size: 1rem; font-weight: 700; color: var(--fg);
+      margin: 2rem 0 1rem; letter-spacing: -0.01em;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .section-title svg { color: var(--primary); flex-shrink: 0; }
+    .table-wrap {
+      width: 100%; overflow-x: auto;
+      border-radius: 16px; border: 2px solid var(--border);
+      background: var(--card); box-shadow: var(--shadow);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    thead tr { border-bottom: 2px solid var(--border); }
+    thead th {
+      padding: 0.75rem 1rem; text-align: left;
+      font-size: 0.72rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.07em; white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .15s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(199,125,190,0.04); }
+    tbody td { padding: 0.75rem 1rem; color: var(--fg); vertical-align: middle; }
+    .td-muted { color: var(--muted); font-size: 0.82rem; }
+    .badge-status {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.2rem 0.7rem; border-radius: 50px;
+      font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+    }
+    .s-active     { background: rgba(21,128,61,0.1);   color: #15803d; border: 1.5px solid rgba(21,128,61,0.2); }
+    .s-suspicious { background: rgba(234,179,8,0.12);  color: #a16207; border: 1.5px solid rgba(234,179,8,0.3); }
+    .s-unlawful   { background: rgba(220,38,38,0.1);   color: #b91c1c; border: 1.5px solid rgba(220,38,38,0.2); }
+    .s-closed     { background: rgba(142,122,148,0.1); color: var(--muted); border: 1.5px solid rgba(142,122,148,0.2); }
+    .progress-bar-wrap { display: flex; align-items: center; gap: 0.6rem; min-width: 140px; }
+    .progress-track { flex: 1; height: 6px; background: var(--border); border-radius: 50px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 50px; background: linear-gradient(90deg, var(--primary), var(--primary-2)); }
+    .progress-label { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+    .settings-card {
+      background: var(--card); border-radius: 16px;
+      border: 2px solid var(--border); box-shadow: var(--shadow);
+      padding: 1.25rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+    }
+    .settings-info { display: flex; flex-direction: column; gap: 0.2rem; }
+    .settings-label { font-weight: 700; font-size: 0.925rem; color: var(--fg); }
+    .settings-desc  { font-size: 0.82rem; color: var(--muted); line-height: 1.5; max-width: 480px; }
+    .empty-state { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.875rem; }
+    .dash-flash-wrap { width: 100%; max-width: 960px; margin-bottom: 0.5rem; }
