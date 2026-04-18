@@ -239,3 +239,56 @@ body {
 .badge { display:inline-flex; align-items:center; gap:0.35rem; padding:0.25rem 0.85rem; border-radius:50px; font-size:0.8rem; font-weight:600; }
 .badge-active  { background:rgba(21,128,61,0.1); color:#15803d; border:1.5px solid rgba(21,128,61,0.22); }
 .badge-inactive{ background:rgba(142,122,148,0.1); color:var(--muted); border:1.5px solid rgba(142,122,148,0.2); }
+
+@media (max-width: 768px) {
+  .split-container {
+    display: block;
+    min-height: 100vh;
+    width: 100%;
+  }
+
+  .split-left {
+    display: none;
+  }
+
+  .split-right {
+    width: 100%;
+    min-height: 100vh;
+    padding: 1.5rem 1rem;
+    justify-content: center;
+  }
+
+  .split-form {
+    max-width: 100%;
+  }
+
+  .form-card {
+    max-width: 100%;
+    padding: 1.8rem 1.2rem;
+    border-radius: 20px;
+  }
+
+  .form-footer-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cards-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .info-card {
+    min-width: unset;
+    max-width: unset;
+  }
+
+  .navbar {
+    padding: 0.75rem 1rem;
+    gap: 0.5rem;
+  }
+
+  .navbar-user {
+    display: none;
+  }
+}
