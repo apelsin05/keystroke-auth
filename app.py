@@ -88,7 +88,7 @@ init_csv_files()
 
 # ── ENROLLMENT threshold 
 
-ENROLLMENT_LOGINS = 20   # collect data for first 20 logins before scoring
+ENROLLMENT_LOGINS = 12   # collect data for first 12 logins before scoring
 
 # ── Utility: generate a 6-digit 2FA code 
 
