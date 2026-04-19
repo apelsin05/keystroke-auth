@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from datetime import datetime
 
-ENROLLMENT_LOGINS = 20
+ENROLLMENT_LOGINS = 12
 
 
 def get_device_info(request):

@@ -240,19 +240,6 @@ body {
 .badge-active  { background:rgba(21,128,61,0.1); color:#15803d; border:1.5px solid rgba(21,128,61,0.22); }
 .badge-inactive{ background:rgba(142,122,148,0.1); color:var(--muted); border:1.5px solid rgba(142,122,148,0.2); }
 
-<<<<<<< HEAD
-
-@media (max-width: 600px) {
-  .auth-split { flex-direction: column; }
-  .auth-left   { display: none; }
-  .auth-right  { padding: 1.5rem 1rem; }
-  .form-card   { padding: 1.8rem 1.2rem; border-radius: 20px; }
-  .cards-row   { flex-direction: column; align-items: stretch; }
-  .info-card   { min-width: unset; max-width: unset; }
-  .settings-card { flex-direction: column; align-items: flex-start; }
-  .navbar      { padding: 0 1rem; gap: 0.5rem; }
-  .navbar-user { display: none; }
-=======
 @media (max-width: 768px) {
   .split-container {
     display: block;
@@ -304,5 +291,4 @@ body {
   .navbar-user {
     display: none;
   }
->>>>>>> origin/main
 }

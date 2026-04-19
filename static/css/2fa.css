@@ -187,3 +187,61 @@ form.otp-form .indicator {
 @keyframes tension {
   to { background-position-x:60%; }
 }
+
+@media (max-width: 768px) {
+  body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 1rem;
+  }
+
+  .page-wrapper {
+    width: 100%;
+    gap: 1.25rem;
+  }
+
+  h1 {
+    font-size: 1.35rem;
+    line-height: 1.3;
+    padding: 0 0.5rem;
+  }
+
+  p.subtitle {
+    font-size: 0.92rem;
+    margin-top: -0.35rem;
+    padding: 0 0.75rem;
+  }
+
+  form.otp-form {
+    --size: 2.55rem;
+    --space: 0.5rem;
+    transform: none;
+  }
+
+  form.otp-form input[type=number] {
+    width: var(--size);
+    height: calc(var(--size) * 1.35);
+    font-size: calc(var(--size) * 0.68);
+  }
+
+  .flash-msg {
+    max-width: 90%;
+    font-size: 0.85rem;
+    padding: 0.6rem 1rem;
+  }
+}
+
+@media (max-width: 420px) {
+  form.otp-form {
+    --size: 2.2rem;
+    --space: 0.35rem;
+  }
+
+  h1 {
+    font-size: 1.2rem;
+  }
+
+  p.subtitle {
+    font-size: 0.88rem;
+  }
+}
