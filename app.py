@@ -11,7 +11,7 @@ import bcrypt
 import pandas as pd
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, make_response, redirect, url_for
+    url_for, session, flash, make_response
 )
 from flask_session import Session
 
@@ -52,6 +52,7 @@ SESSIONS_CSV    = os.path.join(DATA_DIR, 'sessions.csv')
 DEVICES_CSV     = os.path.join(DATA_DIR, 'devices.csv')
 SECURITY_CSV = os.path.join(DATA_DIR, 'security_events.csv')
 KNOWN_IPS_CSV = os.path.join(DATA_DIR, 'known_ips.csv')
+AUTH_AUDIT_CSV = os.path.join(DATA_DIR, 'auth_audit.csv')
 
 # ── CSV helpers 
 
@@ -82,6 +83,10 @@ def init_csv_files():
                            'token_expires_at', 'resolved'])
     ensure_csv(KNOWN_IPS_CSV, ['ip_id', 'user_id', 'ip_address', 'country', 'city',
                             'isp', 'first_seen', 'last_seen', 'times_seen', 'trusted'])
+    ensure_csv(AUTH_AUDIT_CSV, [ 'audit_id','timestamp', 'stage','user_id','email',
+                            'session_id','device_id', 'ip_address', 'entered_code_masked', 
+                            'stored_code_masked', 'entered_length', 'stored_length', 'codes_match', 
+                            'expires_at','is_expired', 'twofa_attempts', 'reason', 'device_info' ])
 
 # Run on startup
 init_csv_files()
@@ -225,6 +230,65 @@ def append_row(path, row_dict):
     with open(path, 'a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=row_dict.keys())
         writer.writerow(row_dict)
+
+def mask_2fa_code(code):
+    """
+    Mascheaza codul 2FA pentru audit.
+    Exemplu:
+    012345 -> 0*****
+    987654 -> 9*****
+    """
+    if code is None:
+        return ''
+    code = str(code)
+    if not code:
+        return ''
+    if len(code) == 1:
+        return '*'
+    return code[0] + ('*' * (len(code) - 1))
+
+
+def append_auth_audit(
+    stage,
+    user_id='',
+    email='',
+    session_id='',
+    device_id='',
+    ip_address='',
+    entered_code='',
+    stored_code='',
+    codes_match='',
+    expires_at='',
+    is_expired='',
+    twofa_attempts='',
+    reason='',
+    device_info=''
+):
+    """
+    Audit tehnic pentru fluxul de autentificare.
+    Nu salveaza codul 2FA in clar.
+    """
+    row = {
+        'audit_id':            str(uuid.uuid4()),
+        'timestamp':           datetime.utcnow().isoformat(),
+        'stage':               stage,
+        'user_id':             user_id or '',
+        'email':               email or '',
+        'session_id':          session_id or '',
+        'device_id':           device_id or '',
+        'ip_address':          ip_address or '',
+        'entered_code_masked': mask_2fa_code(entered_code),
+        'stored_code_masked':  mask_2fa_code(stored_code),
+        'entered_length':      len(str(entered_code)) if entered_code is not None else '',
+        'stored_length':       len(str(stored_code)) if stored_code is not None else '',
+        'codes_match':         codes_match,
+        'expires_at':          expires_at or '',
+        'is_expired':          is_expired,
+        'twofa_attempts':      twofa_attempts,
+        'reason':              reason or '',
+        'device_info':         device_info or '',
+    }
+    append_row(AUTH_AUDIT_CSV, row)
 
 # ── Routes
 
@@ -398,6 +462,22 @@ def login():
         'expires_at': expires_at,
     })
     send_2fa_email(user['email'], code)
+
+    append_auth_audit(
+        stage='2fa_code_generated',
+        user_id=user['user_id'],
+        email=user['email'],
+        session_id=session_id,
+        device_id=device['device_id'],
+        ip_address=request.remote_addr,
+        stored_code=code,
+        expires_at=expires_at,
+        is_expired=False,
+        twofa_attempts=0,
+        reason='code_created_and_emailed',
+        device_info=str(device_info_dict)
+    )
+
     session['pending_user_id']         = user['user_id']
     session['pending_session_id']       = session_id
     session['pending_keystrokes']       = ks_raw
@@ -420,39 +500,131 @@ def two_fa():
 
     entered_code = request.form.get('code', '').strip()
     session_id   = session.get('pending_session_id')
+    user_id      = session.get('pending_user_id', '')
+    device_id    = session.get('pending_device_id', '')
+    device_info  = session.get('pending_device_info', '')
+    ip_address   = request.remote_addr
+    user_temp    = find_user_by_id(user_id)
+    email_temp   = user_temp['email'] if user_temp else ''
+
+    append_auth_audit(
+        stage='2fa_submit_received',
+        user_id=user_id,
+        email=email_temp,
+        session_id=session_id,
+        device_id=device_id,
+        ip_address=ip_address,
+        entered_code=entered_code,
+        twofa_attempts=session.get('twofa_attempts', 0),
+        reason='user_submitted_code',
+        device_info=device_info
+    )
 
     # --- look up the code in the temporary table ---
     try:
-        df  = pd.read_csv(TWO_FA_CSV)
-        row = df[df['session_id'] == session_id]
+        df = pd.read_csv(
+            TWO_FA_CSV,
+            dtype={
+                'session_id': str,
+                'code': str,
+                'expires_at': str
+            }
+        )
+        row = df[df['session_id'] == str(session_id)]
     except Exception:
+        append_auth_audit(
+            stage='2fa_lookup_error',
+            user_id=user_id,
+            email=email_temp,
+            session_id=session_id,
+            device_id=device_id,
+            ip_address=ip_address,
+            entered_code=entered_code,
+            reason='csv_read_failed',
+            device_info=device_info
+        )
         flash('Eroare la verificarea codului.', 'error')
         return render_template('2fa.html')
 
     if row.empty:
+        append_auth_audit(
+            stage='2fa_session_not_found',
+            user_id=user_id,
+            email=email_temp,
+            session_id=session_id,
+            device_id=device_id,
+            ip_address=ip_address,
+            entered_code=entered_code,
+            reason='session_id_not_found_in_2fa_codes',
+            device_info=device_info
+        )
         flash('Codul nu a fost gasit. Incearca din nou.', 'error')
         return redirect(url_for('login'))
 
-    record     = row.iloc[0]
-    expires_at = datetime.fromisoformat(record['expires_at'])
+    record      = row.iloc[0]
+    stored_code = str(record['code']).zfill(6)
+    expires_at  = datetime.fromisoformat(str(record['expires_at']))
 
     # --- check expiry ---
     if datetime.utcnow() > expires_at:
-        # delete expired row
-        df = df[df['session_id'] != session_id]
+        append_auth_audit(
+            stage='2fa_expired',
+            user_id=user_id,
+            email=email_temp,
+            session_id=session_id,
+            device_id=device_id,
+            ip_address=ip_address,
+            entered_code=entered_code,
+            stored_code=stored_code,
+            codes_match=(entered_code == stored_code),
+            expires_at=expires_at.isoformat(),
+            is_expired=True,
+            twofa_attempts=session.get('twofa_attempts', 0),
+            reason='code_expired_before_validation',
+            device_info=device_info
+        )
+
+        df = df[df['session_id'] != str(session_id)]
         df.to_csv(TWO_FA_CSV, index=False)
+
         flash('Codul a expirat. Te rugam sa te autentifici din nou.', 'error')
         return redirect(url_for('login'))
 
+
     # --- check code ---
-    if entered_code != str(record['code']):
+    if entered_code != stored_code:
         session['twofa_attempts'] = session.get('twofa_attempts', 0) + 1
         attempts = session['twofa_attempts']
 
+        reason = 'code_mismatch'
+        if len(entered_code) != 6:
+            reason = 'entered_code_wrong_length'
+        elif str(record['code']) != stored_code:
+            reason = 'stored_code_normalized_with_zfill'
+        elif entered_code.startswith('0') and not str(record['code']).startswith('0'):
+            reason = 'leading_zero_mismatch'
+
+        append_auth_audit(
+            stage='2fa_compare_failed',
+            user_id=user_id,
+            email=email_temp,
+            session_id=session_id,
+            device_id=device_id,
+            ip_address=ip_address,
+            entered_code=entered_code,
+            stored_code=stored_code,
+            codes_match=False,
+            expires_at=expires_at.isoformat(),
+            is_expired=False,
+            twofa_attempts=attempts,
+            reason=reason,
+            device_info=device_info
+        )
+
         append_row(SECURITY_CSV, {
             'event_id':         str(uuid.uuid4()),
-            'user_id':          session.get('pending_user_id', ''),
-            'device_id':        session.get('pending_device_id', ''),
+            'user_id':          user_id,
+            'device_id':        device_id,
             'event_type':       'failed_2fa',
             'timestamp':        datetime.utcnow().isoformat(),
             'details':          f'attempt {attempts}',
@@ -461,31 +633,67 @@ def two_fa():
             'resolved':         0,
         })
 
-        if attempts == 2:
-            user_temp = find_user_by_id(session.get('pending_user_id'))
-            if user_temp:
-                send_security_alert_email(
-                    user_temp['email'], attempts,
-                    datetime.utcnow().isoformat()
-                )
+        if attempts == 2 and user_temp:
+            send_security_alert_email(
+                user_temp['email'],
+                attempts,
+                datetime.utcnow().isoformat()
+            )
 
         if attempts >= 3:
-            df = df[df['session_id'] != session_id]
+            append_auth_audit(
+                stage='2fa_locked_out',
+                user_id=user_id,
+                email=email_temp,
+                session_id=session_id,
+                device_id=device_id,
+                ip_address=ip_address,
+                entered_code=entered_code,
+                stored_code=stored_code,
+                codes_match=False,
+                expires_at=expires_at.isoformat(),
+                is_expired=False,
+                twofa_attempts=attempts,
+                reason='three_failed_2fa_attempts',
+                device_info=device_info
+            )
+
+            df = df[df['session_id'] != str(session_id)]
             df.to_csv(TWO_FA_CSV, index=False)
+
             session.pop('pending_user_id', None)
             session.pop('pending_session_id', None)
             session.pop('pending_keystrokes', None)
             session.pop('pending_device_id', None)
             session.pop('pending_device_info', None)
             session.pop('twofa_attempts', None)
+            session.pop('had_failed_password', None)
+
             flash('Prea multe incercari. Te rugam sa te autentifici din nou.', 'error')
             return redirect(url_for('login'))
 
         flash('Cod incorect.', 'error')
         return render_template('2fa.html')
 
+    append_auth_audit(
+        stage='2fa_compare_success',
+        user_id=user_id,
+        email=email_temp,
+        session_id=session_id,
+        device_id=device_id,
+        ip_address=ip_address,
+        entered_code=entered_code,
+        stored_code=stored_code,
+        codes_match=True,
+        expires_at=expires_at.isoformat(),
+        is_expired=False,
+        twofa_attempts=session.get('twofa_attempts', 0),
+        reason='code_valid',
+        device_info=device_info
+    )
+
     # --- code is valid: delete it immediately ---
-    df = df[df['session_id'] != session_id]
+    df = df[df['session_id'] != str(session_id)]
     df.to_csv(TWO_FA_CSV, index=False)
 
 
