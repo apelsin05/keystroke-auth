@@ -5,6 +5,7 @@ import csv
 import random
 import string
 from datetime import datetime, timedelta
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import bcrypt
 import pandas as pd
@@ -31,6 +32,7 @@ from utils.orchestrator import decide
 # ── App setup
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
 
 # Server-side session config (stores session data on disk, not in cookie)
@@ -520,6 +522,7 @@ def two_fa():
     ip_address = request.remote_addr
     ip_info    = get_ip_info(ip_address)
     ip_score   = score_ip(user_id, ip_address, KNOWN_IPS_CSV)
+    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
     record_ip(user_id, ip_address, ip_info, KNOWN_IPS_CSV)
 
     # implementare scor de risc

@@ -3,38 +3,72 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+from pathlib import Path
  
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_PATH = BASE_DIR / ".env"
+
+load_dotenv(dotenv_path=ENV_PATH)
+
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS", "").strip()
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "").strip()
+
+
+# load_dotenv()
  
-EMAIL_ADDRESS  = os.getenv('EMAIL_ADDRESS')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+# EMAIL_ADDRESS  = os.getenv('EMAIL_ADDRESS')
+# EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+
+# def _send(to_email, subject, body_html):
+#     """
+#     Functie interna de trimitere. Toate functiile publice o apeleaza pe aceasta.
+#     Foloseste Gmail SMTP pe portul 587 cu STARTTLS - prtotocolul recomandat pentru emailuri.
+#     Daca .env nu e configurat, afiseaza in terminal (fallback pentru dezvoltare).
+#     """
+#     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
+#         print(f"[EMAIL STUB] To: {to_email} | Subject: {subject}")
+#         print(body_html)
+#         return
+ 
+#     msg = MIMEMultipart('alternative')
+#     msg['Subject'] = subject
+#     msg['From']    = EMAIL_ADDRESS
+#     msg['To']      = to_email
+#     msg.attach(MIMEText(body_html, 'html'))
+ 
+#     try:
+#         with smtplib.SMTP('smtp.gmail.com', 587) as server:
+#             server.ehlo()
+#             server.starttls()
+#             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+#             server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+#     except Exception as e:
+#         #  daca emailul esueaza logheaza eroarea, nu arunca exceptie inca
+#         print(f"[EMAIL ERROR] {e}")
 
 def _send(to_email, subject, body_html):
-    """
-    Functie interna de trimitere. Toate functiile publice o apeleaza pe aceasta.
-    Foloseste Gmail SMTP pe portul 587 cu STARTTLS - prtotocolul recomandat pentru emailuri.
-    Daca .env nu e configurat, afiseaza in terminal (fallback pentru dezvoltare).
-    """
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
+        print("[EMAIL STUB] Lipsesc EMAIL_ADDRESS sau EMAIL_PASSWORD")
         print(f"[EMAIL STUB] To: {to_email} | Subject: {subject}")
-        print(body_html)
         return
- 
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = subject
-    msg['From']    = EMAIL_ADDRESS
-    msg['To']      = to_email
-    msg.attach(MIMEText(body_html, 'html'))
- 
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_ADDRESS
+    msg["To"] = to_email
+    msg.attach(MIMEText(body_html, "html"))
+
     try:
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        print(f"[EMAIL DEBUG] Trimit email catre {to_email} folosind {EMAIL_ADDRESS}")
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as server:
             server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+        print("[EMAIL DEBUG] Email trimis cu succes")
     except Exception as e:
-        #  daca emailul esueaza logheaza eroarea, nu arunca exceptie inca
-        print(f"[EMAIL ERROR] {e}")
+        print(f"[EMAIL ERROR] {type(e).__name__}: {e}")
 
 def send_2fa_email(to_email, code):
     subject = "Codul tau de verificare"
