@@ -20,3 +20,4 @@ __pycache__/
 data/*.csv
 
 data/models/
+populate_test_data.py
