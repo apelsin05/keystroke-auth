@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from datetime import datetime
 
-ENROLLMENT_LOGINS = 20
+ENROLLMENT_LOGINS = 12
 
 
 def get_device_info(request):
@@ -141,7 +141,7 @@ def create_device(user_id, fingerprint, token, devices_csv):
 def increment_device_login_count(device_id, devices_csv):
     """
     Incrementeaza login_count pentru device-ul specificat.
-    Daca atinge ENROLLMENT_LOGINS (20), seteaza enrolled=1.
+    Daca atinge ENROLLMENT_LOGINS (12), seteaza enrolled=1.
     Actualizeaza si last_seen.
     """
     df  = pd.read_csv(devices_csv)

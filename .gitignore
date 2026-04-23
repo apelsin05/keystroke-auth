@@ -19,3 +19,4 @@ __pycache__/
 # CSV data files (contain user data)
 data/*.csv
 
+data/models/

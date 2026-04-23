@@ -8,6 +8,7 @@ import pandas as pd
 from datetime import datetime
 from sklearn.svm import OneClassSVM
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import IsolationForest
 
 # CONSTANTE
 
@@ -142,14 +143,14 @@ def _model_path(user_id, device_id):
     os.makedirs(MODELS_DIR, exist_ok=True)
     return os.path.join(MODELS_DIR, f'model_{user_id}_{device_id}.pkl')
 
-def _score_to_float(decision_value):
+def _calibrated_sigmoid(raw_score, train_mean, train_std):
     """
-    Convertește distanța de la frontiera One-Class SVM la un scor 0.0–1.0.
- 
+    Convert a raw model score to 0.0-1.0 using a calibrated sigmoid.
+    Calibration: z-score against training distribution, then sigmoid with scale=1.5.
+    A score near the training mean maps to ~0.5; outliers map toward 0.0.
     """
-    # Sigmoid: 1 / (1 + e^(-x))
-    # Scalăm cu 0.5 pentru a face curba mai lină
-    score = 1.0 / (1.0 + np.exp(-decision_value * 0.5))
+    z = (raw_score - train_mean) / max(train_std, 0.001)
+    score = 1.0 / (1.0 + np.exp(-z * 1.5))
     return float(np.clip(score, 0.0, 1.0))
 
 
@@ -195,7 +196,7 @@ def save_keystroke_sample(csv_path, user_id, device_id, login_id, ks_raw):
 
 def train_model(csv_path, user_id, device_id):
     """
-    Antrenează un model One-Class SVM pe probele de enrollment ale unui user+device.
+    Antreneaza un model One-Class SVM pe probele de enrollment ale unui user+device.
     Salvează modelul și scalerul împreună într-un singur fișier .pkl.
  
     Returns:
@@ -233,29 +234,48 @@ def train_model(csv_path, user_id, device_id):
     # 4. Construieste matricea de antrenare: shape (n_samples, 4)
     X = np.array(feature_vectors)
  
-    # 5. Normalizare cu StandardScaler (z-score)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
- 
-    # 6. Antrenare One-Class SVM
-    # nu=0.1 înseamnă: acceptăm că maxim 10% din datele de training
-    # pot fi tratate ca outlieri (robustness la probe zgomotoase)
-    # kernel='rbf' permite frontiere non-liniare — mai potrivit pentru
-    # date biometrice care nu sunt liniar separabile
-    model = OneClassSVM(nu=0.1, kernel='rbf', gamma='scale')
-    model.fit(X_scaled)
- 
-    # 7. Save modelul + scalerul împreună
-    # Save și metadata pentru debugging și thesis
+    # --- Isolation Forest ---
+    scaler_if = StandardScaler()
+    X_scaled_if = scaler_if.fit_transform(X)
+
+    model_if = IsolationForest(n_estimators=100, contamination=0.1, random_state=42)
+    model_if.fit(X_scaled_if)
+
+    # Calibrate: score all training samples, record distribution
+    train_scores_if = model_if.score_samples(X_scaled_if)
+    train_mean_if   = float(np.mean(train_scores_if))
+    train_std_if    = float(np.std(train_scores_if))
+
+    # --- One-Class SVM ---
+    scaler_svm = StandardScaler()
+    X_scaled_svm = scaler_svm.fit_transform(X)
+
+    model_svm = OneClassSVM(nu=0.1, kernel='rbf', gamma='scale')
+    model_svm.fit(X_scaled_svm)
+
+    # Calibrate: use decision_function on training data
+    train_scores_svm = model_svm.decision_function(X_scaled_svm)
+    train_mean_svm   = float(np.mean(train_scores_svm))
+    train_std_svm    = float(np.std(train_scores_svm))
+
     bundle = {
-        'model':      model,
-        'scaler':     scaler,
-        'trained_at': datetime.utcnow().isoformat(),
-        'n_samples':  len(feature_vectors),
-        'user_id':    user_id,
-        'device_id':  device_id,
+        # Isolation Forest
+        'model_if':       model_if,
+        'scaler_if':      scaler_if,
+        'train_mean_if':  train_mean_if,
+        'train_std_if':   train_std_if,
+        # One-Class SVM
+        'model_svm':      model_svm,
+        'scaler_svm':     scaler_svm,
+        'train_mean_svm': train_mean_svm,
+        'train_std_svm':  train_std_svm,
+        # Metadata
+        'trained_at':     datetime.utcnow().isoformat(),
+        'n_samples':      len(feature_vectors),
+        'user_id':        user_id,
+        'device_id':      device_id,
     }
- 
+
     path = _model_path(user_id, device_id)
     try:
         joblib.dump(bundle, path)
@@ -296,20 +316,20 @@ def compare_profiles(csv_path, user_id, device_id, ks_raw):
    
     try:
         bundle = joblib.load(path)
-        model  = bundle['model']
-        scaler = bundle['scaler']
     except Exception:
-        return 1.0  # model corupt sau incompatibil, nu penalizeaza
- 
-    # 6. Normalizare cu ACELAȘI scaler de la antrenare
-    vec_scaled = scaler.transform(vec.reshape(1, -1))
- 
-    # 7. Calculare distanța față de frontieră
-    # decision_function > 0 → înăuntrul frontierei (legitim)
-    # decision_function < 0 → în afara frontierei (suspect)
-    decision_value = model.decision_function(vec_scaled)[0]
- 
-    # 8. Convertim distanța la scor 0.0–1.0 prin sigmoid
-    score = _score_to_float(decision_value)
- 
-    return score
+        return 1.0  # corrupt or incompatible bundle
+
+    # --- Score with Isolation Forest ---
+    vec_if     = bundle['scaler_if'].transform(vec.reshape(1, -1))
+    raw_if     = bundle['model_if'].score_samples(vec_if)[0]
+    score_if   = _calibrated_sigmoid(raw_if, bundle['train_mean_if'], bundle['train_std_if'])
+
+    # --- Score with One-Class SVM ---
+    vec_svm    = bundle['scaler_svm'].transform(vec.reshape(1, -1))
+    raw_svm    = bundle['model_svm'].decision_function(vec_svm)[0]
+    score_svm  = _calibrated_sigmoid(raw_svm, bundle['train_mean_svm'], bundle['train_std_svm'])
+
+    # Average the two calibrated scores
+    final_score = (score_if + score_svm) / 2.0
+
+    return float(np.clip(final_score, 0.0, 1.0))
