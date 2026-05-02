@@ -16,7 +16,7 @@ AUXILIARY_KEYS = {'Shift', 'CapsLock', 'Backspace'}
 MIN_CHARS = 4
 
 
-def save_keystroke_sample(csv_path, user_id, device_id, login_id, ks_raw):
+def save_keystroke_sample(csv_path, user_id, device_id, login_id, ks_raw, attempt_label='genuine'):
     """
     Parsează, curăță și salvează o probă de keystroke dynamics.
     Salvează NUMAI secvența finală curățată — niciodată date brute.
@@ -131,6 +131,7 @@ def save_keystroke_sample(csv_path, user_id, device_id, login_id, ks_raw):
         'has_backspace':        has_backspace,
         'confidence':           confidence,
         'is_truncated':         is_truncated,
+        'attempt_label': attempt_label,
         'recorded_at':          datetime.utcnow().isoformat()
     }
 

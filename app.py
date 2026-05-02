@@ -71,9 +71,9 @@ def init_csv_files():
     ensure_csv(LOGINS_CSV,     ['login_id', 'user_id', 'timestamp', 'device_info',
                                  'location', 'status'])
     ensure_csv(KEYSTROKES_CSV, ['sample_id', 'user_id', 'device_id', 'login_id',
-                             'final_sequence_json', 'auxiliary_json',
-                             'has_backspace', 'confidence', 'is_truncated',
-                             'recorded_at'])
+                         'final_sequence_json', 'auxiliary_json',
+                         'has_backspace', 'confidence', 'is_truncated',
+                         'attempt_label', 'recorded_at'])
     ensure_csv(TWO_FA_CSV,     ['session_id', 'code', 'expires_at'])
     ensure_csv(SESSIONS_CSV,   ['session_id', 'user_id', 'status', 'created_at'])
     ensure_csv(DEVICES_CSV,    ['device_id', 'user_id', 'fingerprint_hash', 'token',
@@ -263,7 +263,7 @@ def append_auth_audit(
     twofa_attempts='',
     reason='',
     device_info=''
-):
+    ):
     """
     Audit tehnic pentru fluxul de autentificare.
     Nu salveaza codul 2FA in clar.
@@ -289,6 +289,42 @@ def append_auth_audit(
         'device_info':         device_info or '',
     }
     append_row(AUTH_AUDIT_CSV, row)
+
+
+# ia tastarea parolei din session['pending_keystrokes']
+# ia user_id și device_id din sesiune
+# o salvează cu attempt_label='test_impostor'
+# marchează că a fost deja salvată
+def save_pending_impostor_sample(login_id_label):
+    """
+    Salveaza tastarea parolei ca proba de test impostor.
+
+    De ce aici:
+    - parola a fost corecta, deci avem pending_keystrokes din /login;
+    - 2FA a esuat/expirat, deci persoana nu a demonstrat ca este proprietarul;
+    - salvam o singura data per sesiune, ca sa nu duplicam aceeasi tastare.
+    """
+    if session.get('impostor_sample_saved'):
+        return False
+
+    impostor_ks = session.get('pending_keystrokes', '[]')
+    impostor_uid = session.get('pending_user_id', '')
+    impostor_did = session.get('pending_device_id', '')
+
+    if not impostor_uid or not impostor_did or impostor_ks == '[]':
+        return False
+
+    save_keystroke_sample(
+        KEYSTROKES_CSV,
+        impostor_uid,
+        impostor_did,
+        login_id_label,
+        impostor_ks,
+        attempt_label='test_impostor'
+    )
+    session['impostor_sample_saved'] = True
+    return True
+
 
 # ── Routes
 
@@ -485,6 +521,7 @@ def login():
     session['pending_device_info']      = str(device_info_dict)
     session['twofa_attempts']           = 0
     session['had_failed_password']      = had_failed_password
+    session['impostor_sample_saved'] = False
     return redirect(url_for('two_fa'))
 
 
@@ -583,9 +620,23 @@ def two_fa():
             reason='code_expired_before_validation',
             device_info=device_info
         )
+        
+        # daca omul a introdus parola corecta, dar nu a introdus OTP-ul la timp, 
+        # îl tratam ca probă de test impostor pentru evaluare
+        save_pending_impostor_sample('expired_2fa')
 
         df = df[df['session_id'] != str(session_id)]
         df.to_csv(TWO_FA_CSV, index=False)
+
+    # curatarea sesiunii
+        session.pop('pending_user_id', None)
+        session.pop('pending_session_id', None)
+        session.pop('pending_keystrokes', None)
+        session.pop('pending_device_id', None)
+        session.pop('pending_device_info', None)
+        session.pop('twofa_attempts', None)
+        session.pop('had_failed_password', None)
+        session.pop('impostor_sample_saved', None)
 
         flash('Codul a expirat. Te rugam sa te autentifici din nou.', 'error')
         return redirect(url_for('login'))
@@ -595,7 +646,7 @@ def two_fa():
     if entered_code != stored_code:
         session['twofa_attempts'] = session.get('twofa_attempts', 0) + 1
         attempts = session['twofa_attempts']
-
+        
         reason = 'code_mismatch'
         if len(entered_code) != 6:
             reason = 'entered_code_wrong_length'
@@ -658,6 +709,8 @@ def two_fa():
                 device_info=device_info
             )
 
+            save_pending_impostor_sample('failed_2fa_lockout')
+
             df = df[df['session_id'] != str(session_id)]
             df.to_csv(TWO_FA_CSV, index=False)
 
@@ -668,6 +721,7 @@ def two_fa():
             session.pop('pending_device_info', None)
             session.pop('twofa_attempts', None)
             session.pop('had_failed_password', None)
+            session.pop('impostor_sample_saved', None)
 
             flash('Prea multe incercari. Te rugam sa te autentifici din nou.', 'error')
             return redirect(url_for('login'))
@@ -811,6 +865,7 @@ def two_fa():
     session.pop('pending_device_info', None)
     session.pop('twofa_attempts', None)
     session.pop('had_failed_password', None)
+    session.pop('impostor_sample_saved', None)
     session['user_id']  = user_id
     session['username'] = user['username'] if user else ''
     session.permanent   = True
