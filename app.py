@@ -52,7 +52,8 @@ SESSIONS_CSV    = os.path.join(DATA_DIR, 'sessions.csv')
 DEVICES_CSV     = os.path.join(DATA_DIR, 'devices.csv')
 SECURITY_CSV = os.path.join(DATA_DIR, 'security_events.csv')
 KNOWN_IPS_CSV = os.path.join(DATA_DIR, 'known_ips.csv')
-AUTH_AUDIT_CSV = os.path.join(DATA_DIR, 'auth_audit.csv')
+AUTH_AUDIT_CSV  = os.path.join(DATA_DIR, 'auth_audit.csv')
+ML_LOG_CSV      = os.path.join(DATA_DIR, 'ml_log.csv')
 
 # ── CSV helpers 
 
@@ -64,16 +65,66 @@ def ensure_csv(path, headers):
             writer = csv.writer(f)
             writer.writerow(headers)
 
+def log_ml_event(user_id, device_id, login_id, ks_result,
+                 ip_score, final_score, decision, login_status,
+                 sample_added=False):
+    """Loghează în ml_log.csv rezultatul scoring-ului biometric."""
+    feat   = ks_result.get('features') or {}
+    prof   = ks_result.get('profile') or {}
+
+    def prof_mean(k):
+        v = prof.get(k)
+        return round(v['mean'], 2) if v else None
+
+    append_row(ML_LOG_CSV, {
+        'log_id':               str(uuid.uuid4()),
+        'timestamp':            datetime.utcnow().isoformat(),
+        'event_type':           ks_result.get('status', 'scored'),
+        'user_id':              user_id,
+        'device_id':            device_id,
+        'login_id':             login_id,
+        'n_samples':            ks_result.get('n_enrollment'),
+        'mean_dwell_ms':        round(feat.get('mean_dwell', 0), 2),
+        'std_dwell_ms':         round(feat.get('std_dwell', 0), 2),
+        'mean_flight_ms':       round(feat.get('mean_flight', 0), 2),
+        'std_flight_ms':        round(feat.get('std_flight', 0), 2),
+        # score_if reciclat → scorul brut Manhattan
+        'score_if':             round(ks_result['score_raw'], 3) if ks_result.get('score_raw') is not None else None,
+        # score_svm reciclat → threshold-ul LOO calibrat
+        'score_svm':            round(ks_result['threshold'], 3) if ks_result.get('threshold') is not None else None,
+        'keystroke_score':      round(ks_result['keystroke_score'], 3),
+        'ip_score':             round(ip_score, 3),
+        'final_score':          round(final_score, 3),
+        'decision':             decision,
+        'login_status':         login_status,
+        'sample_added':         int(sample_added),
+        'confirmed':            None,
+        'train_mean_dwell':     prof_mean('mean_dwell'),
+        'train_std_dwell':      prof_mean('std_dwell'),
+        'train_mean_flight':    prof_mean('mean_flight'),
+        'train_std_flight':     prof_mean('std_flight'),
+        'train_score_if_min':   None,
+        'train_score_if_max':   None,
+        'train_score_if_mean':  None,
+        'train_score_svm_min':  None,
+        'train_score_svm_max':  None,
+        'train_score_svm_mean': None,
+        'notes':                'manhattan_scaled'
+    })
+
 def init_csv_files():
     ensure_csv(USERS_CSV,      ['user_id', 'email', 'username', 'password_hash',
                                  'name', 'surname', 'phone', 'keystroke_enabled',
                                  'created_at'])
     ensure_csv(LOGINS_CSV,     ['login_id', 'user_id', 'timestamp', 'device_info',
                                  'location', 'status'])
-    ensure_csv(KEYSTROKES_CSV, ['sample_id', 'user_id', 'device_id', 'login_id',
-                             'final_sequence_json', 'auxiliary_json',
-                             'has_backspace', 'confidence', 'is_truncated',
-                             'recorded_at'])
+    ensure_csv(KEYSTROKES_CSV, [
+        'sample_id', 'user_id', 'device_id', 'login_id',
+        'final_sequence_json', 'auxiliary_json',
+        'has_backspace', 'confidence', 'is_truncated',
+        'attempt_label', 'usable_for_training', 'usable_for_evaluation',  # NOU
+        'recorded_at'
+    ])
     ensure_csv(TWO_FA_CSV,     ['session_id', 'code', 'expires_at'])
     ensure_csv(SESSIONS_CSV,   ['session_id', 'user_id', 'status', 'created_at'])
     ensure_csv(DEVICES_CSV,    ['device_id', 'user_id', 'fingerprint_hash', 'token',
@@ -83,10 +134,26 @@ def init_csv_files():
                            'token_expires_at', 'resolved'])
     ensure_csv(KNOWN_IPS_CSV, ['ip_id', 'user_id', 'ip_address', 'country', 'city',
                             'isp', 'first_seen', 'last_seen', 'times_seen', 'trusted'])
-    ensure_csv(AUTH_AUDIT_CSV, [ 'audit_id','timestamp', 'stage','user_id','email',
-                            'session_id','device_id', 'ip_address', 'entered_code_masked', 
-                            'stored_code_masked', 'entered_length', 'stored_length', 'codes_match', 
-                            'expires_at','is_expired', 'twofa_attempts', 'reason', 'device_info' ])
+    ensure_csv(AUTH_AUDIT_CSV, [
+        'audit_id', 'timestamp', 'stage', 'user_id', 'email',
+        'session_id', 'device_id', 'ip_address',
+        'entered_code_masked', 'stored_code_masked',
+        'entered_length', 'stored_length', 'codes_match',
+        'expires_at', 'is_expired', 'twofa_attempts',
+        'reason', 'device_info'
+    ])
+    ensure_csv(ML_LOG_CSV, [
+        'log_id', 'timestamp', 'event_type', 'user_id', 'device_id',
+        'login_id', 'n_samples', 'mean_dwell_ms', 'std_dwell_ms',
+        'mean_flight_ms', 'std_flight_ms', 'score_if', 'score_svm',
+        'keystroke_score', 'ip_score', 'final_score', 'decision',
+        'login_status', 'sample_added', 'confirmed',
+        'train_mean_dwell', 'train_std_dwell',
+        'train_mean_flight', 'train_std_flight',
+        'train_score_if_min', 'train_score_if_max', 'train_score_if_mean',
+        'train_score_svm_min', 'train_score_svm_max', 'train_score_svm_mean',
+        'notes'
+    ])
 
 # Run on startup
 init_csv_files()
@@ -584,6 +651,19 @@ def two_fa():
             device_info=device_info
         )
 
+        # Capturăm tastarea ca impostor (nu știa codul → nu a primit emailul)
+        if not session.get('impostor_sample_saved'):
+            impostor_ks  = session.get('pending_keystrokes', '[]')
+            impostor_uid = session.get('pending_user_id', '')
+            impostor_did = session.get('pending_device_id', '')
+            if impostor_uid and impostor_did and impostor_ks != '[]':
+                save_keystroke_sample(
+                    KEYSTROKES_CSV, impostor_uid, impostor_did,
+                    'expired_2fa', impostor_ks,
+                    attempt_label='test_impostor'
+                )
+                session['impostor_sample_saved'] = True
+
         df = df[df['session_id'] != str(session_id)]
         df.to_csv(TWO_FA_CSV, index=False)
 
@@ -621,6 +701,19 @@ def two_fa():
             device_info=device_info
         )
 
+         # Capturăm tastarea ca impostor la prima încercare greșită
+        if attempts == 1 and not session.get('impostor_sample_saved'):
+            impostor_ks  = session.get('pending_keystrokes', '[]')
+            impostor_uid = session.get('pending_user_id', '')
+            impostor_did = session.get('pending_device_id', '')
+            if impostor_uid and impostor_did and impostor_ks != '[]':
+                save_keystroke_sample(
+                    KEYSTROKES_CSV, impostor_uid, impostor_did,
+                    'failed_2fa', impostor_ks,
+                    attempt_label='test_impostor'
+                )
+                session['impostor_sample_saved'] = True
+
         append_row(SECURITY_CSV, {
             'event_id':         str(uuid.uuid4()),
             'user_id':          user_id,
@@ -657,6 +750,18 @@ def two_fa():
                 reason='three_failed_2fa_attempts',
                 device_info=device_info
             )
+
+            # Salvăm tastarea ca impostor dacă nu am salvat-o deja la prima greșeală
+            if not session.get('impostor_sample_saved'):
+                impostor_ks  = session.get('pending_keystrokes', '[]')
+                impostor_uid = session.get('pending_user_id', '')
+                impostor_did = session.get('pending_device_id', '')
+                if impostor_uid and impostor_did and impostor_ks != '[]':
+                    save_keystroke_sample(
+                        KEYSTROKES_CSV, impostor_uid, impostor_did,
+                        'failed_2fa_lockout', impostor_ks,
+                        attempt_label='test_impostor'
+                    )
 
             df = df[df['session_id'] != str(session_id)]
             df.to_csv(TWO_FA_CSV, index=False)
@@ -733,13 +838,45 @@ def two_fa():
     ip_address = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
     record_ip(user_id, ip_address, ip_info, KNOWN_IPS_CSV)
 
-    # implementare scor de risc
-    keystroke_score = 1.0  # stub pana la implementarea finala a keystroke capture
-    result          = decide(keystroke_score, ip_score)
-    print(f"[DEBUG] IP score: {ip_score}, Decision: {result}") #pt debug in consola
-    decision        = result['decision']
+    
+    # ---- KEYSTROKE SCORING + DECIZIE ORCHESTRATOR ----
+    # 1. Citim login_count pentru a ști în ce fază suntem
+    try:
+        df_dev  = pd.read_csv(DEVICES_CSV)
+        dev_row = df_dev[df_dev['device_id'] == device_id]
+        device_login_count = int(dev_row.iloc[0]['login_count']) if not dev_row.empty else 0
+    except Exception:
+        device_login_count = 0
 
-    # daca decizia e re-enrollment, resetam contorul dispozitivului
+    ks_result = {'keystroke_score': 1.0, 'score_raw': None,
+                 'threshold': None, 'n_enrollment': 0,
+                 'features': None, 'profile': None, 'status': 'enrollment'}
+    sample_added = False
+
+    if user and int(user['keystroke_enabled']) == 1:
+        if device_login_count < ENROLLMENT_LOGINS:
+            save_keystroke_sample(KEYSTROKES_CSV, user_id, device_id,
+                                  login_id, ks_raw, attempt_label='enrollment_genuine')
+            sample_added = True
+        else:
+            ks_result = compare_profiles(KEYSTROKES_CSV, user_id, device_id, ks_raw)
+            save_keystroke_sample(KEYSTROKES_CSV, user_id, device_id,
+                                  login_id, ks_raw, attempt_label='test_genuine')
+            sample_added = True
+            if ks_result['keystroke_score'] < 0.3:
+                login_status = 'unlawful'
+                send_unlawful_login_email(user['email'], format_device_info(device_info), now)
+
+    result       = decide(ks_result['keystroke_score'], ip_score)
+    decision     = result['decision']
+    final_score  = result['final_score']
+
+    print(f"[DEBUG] keystroke={ks_result['keystroke_score']:.3f} "
+          f"raw={ks_result.get('score_raw')} ip={ip_score:.3f} decision={decision}")
+
+    log_ml_event(user_id, device_id, login_id, ks_result,
+                 ip_score, final_score, decision, login_status, sample_added)
+
     if decision == '2fa_reenrollment':
         try:
             df_dev = pd.read_csv(DEVICES_CSV)
@@ -749,21 +886,6 @@ def two_fa():
         except Exception:
             pass
 
-    try:
-        df_dev  = pd.read_csv(DEVICES_CSV)
-        dev_row = df_dev[df_dev['device_id'] == device_id]
-        device_login_count = int(dev_row.iloc[0]['login_count']) if not dev_row.empty else 0
-    except Exception:
-        device_login_count = 0
-
-    if user and int(user['keystroke_enabled']) == 1:
-        if device_login_count < ENROLLMENT_LOGINS:
-            save_keystroke_sample(KEYSTROKES_CSV, user_id, device_id, login_id, ks_raw)
-        else:
-            match = compare_profiles(KEYSTROKES_CSV, user_id, ks_raw)
-            if not match:
-                login_status = 'unlawful'
-                send_unlawful_login_email(user['email'], format_device_info(device_info), now)
 
     append_row(LOGINS_CSV, {
         'login_id':    login_id,
