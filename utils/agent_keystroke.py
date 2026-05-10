@@ -52,7 +52,7 @@ def _mad(values):
 # EXTRAGERE FEATURES
 # ---------------------------------------------------------------------------
 
-def extract_features(cleaned_events):
+def extract_features_from_events(cleaned_events):
     """
     Extrage vectorul de 4 caracteristici din secvența curățată de events.
     Ignoră flight times 'unreliable' (marcat când a existat backspace între taste).
@@ -110,7 +110,7 @@ def load_enrollment_samples(csv_path, user_id, device_id, max_samples=20):
     for row in rows[:max_samples]:
         try:
             events = json.loads(row['final_sequence_json'])
-            feats = extract_features(events)
+            feats = extract_features_from_events(events)
             if feats is not None:
                 features_list.append(feats)
         except Exception:
@@ -160,15 +160,15 @@ def score_manhattan_scaled(profile, features):
     Scor mic = tastare apropiată de profil.
     Scor mare = tastare suspectă / anomalie.
     """
-    if profile is None or features is None:
+    if profile is None or features is None: #daca nu exista profil /features => distanta infinita
         return float('inf')
 
-    total = 0.0
-    for fname, stats in profile.items():
+    total = 0.0 #porneste scor de la 0
+    for fname, stats in profile.items():  #parcurge fiecare feature din profil
         sample_val = features.get(fname, stats['mean'])
+        #Ia valoarea acelui feature din proba curentă. Dacă lipsește, folosește media din profil ca fallback.
         deviation = abs(sample_val - stats['mean'])
-        total += deviation / (stats['variation'] + EPSILON)
-
+        total += deviation / (stats['variation'] + EPSILON)     #sclaeaza diferenta prin variatia naturala a userului
     return total
 
 
@@ -180,34 +180,35 @@ def calibrate_threshold(feature_list):
     """
     Calculează pragul de decizie prin leave-one-out pe probele de enrollment.
 
-    Prag = mean(scoruri_loo) + 2 * std(scoruri_loo)
+    treshold = mean(scoruri_loo) + 2 * std(scoruri_loo)
 
     La 2 deviatii standard, ~95% din tastările legitime sunt acceptate (FRR ≤ 5%).
     Returnează 4.0 ca fallback permisiv dacă datele sunt insuficiente.
     """
-    if len(feature_list) < MIN_ENROLLMENT_SAMPLES:
+    if len(feature_list) < MIN_ENROLLMENT_SAMPLES:  #fallback daca nu-s suficiente probe
         return 4.0
 
-    loo_scores = []
-    for i, held_out in enumerate(feature_list):
-        rest = [f for j, f in enumerate(feature_list) if j != i]
+    loo_scores = []  #aici se strang scorurile obtinut eprin leave one out
+    for i, held_out in enumerate(feature_list):  # codul ia fiecare proba buna si o scoate temporara din training, si o pune in held_out
+        rest = [f for j, f in enumerate(feature_list) if j != i] #lista de probe ramase
         if len(rest) < 2:
             continue
-        profile = train_manhattan_profile(rest)
+        profile = train_manhattan_profile(rest) #profilul manhattan construit din probele ramase
         if profile is None:
             continue
-        score = score_manhattan_scaled(profile, held_out)
+        score = score_manhattan_scaled(profile, held_out)  #cacluc: cat de departe e proba scoasa fata de profilul contruit fara ea
         if not math.isinf(score):
-            loo_scores.append(score)
+            loo_scores.append(score)   # scorul este salvat in aceasta lista
 
     if len(loo_scores) < 2:
         return 4.0
 
-    mean_loo = sum(loo_scores) / len(loo_scores)
-    std_loo = _std(loo_scores)
-    threshold = mean_loo + 2 * std_loo
+    mean_loo = sum(loo_scores) / len(loo_scores)  #media scorurilor legitime
+    std_loo = _std(loo_scores)  # deviatia standard a scorurilor legitime
+    threshold = mean_loo + 2 * std_loo 
 
-    return max(0.5, min(threshold, 20.0))
+    return max(0.5, min(threshold, 20.0))  # limitele pragului; daca e foarte micc codul il ridica la 0.5
+                                            # prea mare => il duce la 20;  apoi e folosit in compare_profiles in treshold = calibrate...
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +217,7 @@ def calibrate_threshold(feature_list):
 
 def _raw_to_keystroke_score(score_raw, threshold):
     """
-    Convertește scorul Manhattan brut în scor pentru orchestrator.
+    Convertește scorul Manhattan brut în scor pentru orchestrator. 
 
     Formula: keystroke_score = exp(-score_raw / threshold)
 
@@ -225,9 +226,10 @@ def _raw_to_keystroke_score(score_raw, threshold):
       score_raw = threshold   → 0.37  → ALLOW
       score_raw = 2*threshold → 0.14  → 2FA
       score_raw = 3*threshold → 0.05  → RE-ENROLLMENT
+    Valorile au fost selectate empiric. Nu sunt rezultatul unor experiente.
     """
-    if math.isinf(score_raw) or score_raw < 0:
-        return 0.0
+    if math.isinf(score_raw) or score_raw < 0: #nu ar trebui sa existe valori negative la manhattan, dar asta e  un check de siguranta.
+        return 0.0                             # adica: distanță invalidă → scor biometric minim → comportament suspect
     return math.exp(-score_raw / (threshold + EPSILON))
 
 
@@ -265,7 +267,7 @@ def compare_profiles(csv_path, user_id, device_id, ks_raw):
         return 0.5
 
     # 2. Extragere features din proba curentă
-    current_features = extract_features(candidate_buffer)
+    current_features = extract_features_from_events(candidate_buffer)
     if current_features is None:
         return 0.5
 
@@ -399,7 +401,7 @@ def save_keystroke_sample(csv_path, user_id, device_id, login_id, ks_raw,
               and confidence == 'normal')
         else 0
     )
-    features_check = extract_features(cleaned_events)
+    features_check = extract_features_from_events(cleaned_events)
     usable_for_evaluation = 1 if features_check is not None else 0
 
     row = {

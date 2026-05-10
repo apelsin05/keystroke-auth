@@ -552,6 +552,8 @@ def login():
     session['pending_device_info']      = str(device_info_dict)
     session['twofa_attempts']           = 0
     session['had_failed_password']      = had_failed_password
+
+    session.pop('impostor_sample_saved', None)
     return redirect(url_for('two_fa'))
 
 
@@ -703,9 +705,15 @@ def two_fa():
 
          # Capturăm tastarea ca impostor la prima încercare greșită
         if attempts == 1 and not session.get('impostor_sample_saved'):
+            print("[DEBUG IMPOSTOR] entered failed 2FA save branch")
+            print("[DEBUG IMPOSTOR] uid =", session.get('pending_user_id'))
+            print("[DEBUG IMPOSTOR] did =", session.get('pending_device_id'))
+            print("[DEBUG IMPOSTOR] ks length =", len(session.get('pending_keystrokes', '[]')))
+
             impostor_ks  = session.get('pending_keystrokes', '[]')
             impostor_uid = session.get('pending_user_id', '')
             impostor_did = session.get('pending_device_id', '')
+
             if impostor_uid and impostor_did and impostor_ks != '[]':
                 save_keystroke_sample(
                     KEYSTROKES_CSV, impostor_uid, impostor_did,
@@ -773,6 +781,7 @@ def two_fa():
             session.pop('pending_device_info', None)
             session.pop('twofa_attempts', None)
             session.pop('had_failed_password', None)
+            session.pop('impostor_sample_saved', None)
 
             flash('Prea multe incercari. Te rugam sa te autentifici din nou.', 'error')
             return redirect(url_for('login'))
