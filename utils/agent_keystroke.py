@@ -104,7 +104,7 @@ def load_enrollment_samples(csv_path, user_id, device_id, max_samples=20):
 
     rows.sort(key=lambda r: (
         0 if r.get('confidence', 'normal') == 'normal' else 1,
-        r.get('recorded_at', '')
+        r.get('recorded_at') or ''
     ))
 
     for row in rows[:max_samples]:
