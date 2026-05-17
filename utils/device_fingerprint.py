@@ -1,9 +1,14 @@
+"""
+device_fingerprint.py
+---------------------
+Identificare dispozitiv prin fingerprint SHA256 + token localStorage.
+Versiunea SQLite: inlocuieste operatiile pe devices.csv.
+"""
+
 import hashlib
 import uuid
-import csv
-import os
-import pandas as pd
 from datetime import datetime
+from utils.database import get_db, insert, update, execute_query
 
 ENROLLMENT_LOGINS = 12
 
@@ -20,10 +25,7 @@ def get_device_info(request):
 
 
 def generate_fingerprint_hash(device_info_dict):
-    """
-    Face amprenta unica a device-ului din atributele sale stabile, cu SHA256.
-    Rezulta un string hex de 64 de caractere.
-    """
+    """SHA256 din cei 6 atribute stabile ale dispozitivului → hex 64 caractere."""
     combined = '|'.join([
         str(device_info_dict.get('userAgent',    '')),
         str(device_info_dict.get('screenWidth',  '')),
@@ -36,86 +38,81 @@ def generate_fingerprint_hash(device_info_dict):
 
 
 def generate_device_token():
-    """
-    Genereaza UUID unic care va fi stocat in browserul utilizatorului
-    (localStorage) si trimis la fiecare login pentru identificare.
-    """
     return str(uuid.uuid4())
 
 
-def find_device(user_id, fingerprint, token, devices_csv):
+def find_device(user_id, fingerprint, token):
     """
-    Cauta device-ul unui user dupa fingerprint si token.
+    Cauta device-ul dupa fingerprint si token.
     Returneaza: (status: str, device: dict | None)
-    Functia DOAR raporteaza — nu modifica CSV-ul.
+    Semnatura simplificata: nu mai primeste calea CSV.
+
+    Statusuri posibile:
+      - confident_match  : token + fingerprint se potrivesc
+      - browser_updated  : token ok, fingerprint diferit
+      - token_cleared    : fingerprint ok, token lipsa/diferit
+      - new_device       : niciun match
     """
-    try:
-        df = pd.read_csv(devices_csv)
-        user_devices = df[df['user_id'] == user_id]
-    except Exception:
-        return 'new_device', None
+    db = get_db()
 
-    if user_devices.empty:
-        return 'new_device', None
-
-    # Caz 1: token + fingerprint se potrivesc = confident match
+    # Caz 1: token + fingerprint
     if token:
-        match = user_devices[
-            (user_devices['token'] == token) &
-            (user_devices['fingerprint_hash'] == fingerprint)
-        ]
-        if not match.empty:
-            return 'confident_match', match.iloc[0].to_dict()
+        row = db.execute(
+            "SELECT * FROM devices WHERE user_id=? AND token=? AND fingerprint_hash=?",
+            [user_id, token, fingerprint]
+        ).fetchone()
+        if row:
+            return 'confident_match', dict(row)
 
-    # Caz 2: token se potriveste, fingerprint diferit = browser updatat
+    # Caz 2: token ok, fingerprint diferit (browser updatat)
     if token:
-        match = user_devices[user_devices['token'] == token]
-        if not match.empty:
-            return 'browser_updated', match.iloc[0].to_dict()
+        row = db.execute(
+            "SELECT * FROM devices WHERE user_id=? AND token=?",
+            [user_id, token]
+        ).fetchone()
+        if row:
+            return 'browser_updated', dict(row)
 
-    # Caz 3: fingerprint se potriveste, token lipsa/diferit = localStorage sters
-    match = user_devices[user_devices['fingerprint_hash'] == fingerprint]
-    if not match.empty:
-        return 'token_cleared', match.iloc[0].to_dict()
+    # Caz 3: fingerprint ok, token lipsa/diferit (localStorage sters)
+    row = db.execute(
+        "SELECT * FROM devices WHERE user_id=? AND fingerprint_hash=?",
+        [user_id, fingerprint]
+    ).fetchone()
+    if row:
+        return 'token_cleared', dict(row)
 
-    # Caz 4: niciun match  device necunoscut
     return 'new_device', None
 
 
-def repair_device_connection(device, status, new_fingerprint, new_token, devices_csv):
+def repair_device_connection(device, status, new_fingerprint, new_token):
     """
-    Repara conexiunea daca browser-ul s-a updatat sau token-ul a fost sters.
-    Apelata dupa find_device() cand statusul nu e 'confident_match' sau 'new_device'.
-
-    - 'browser_updated' → actualizeaza fingerprint_hash in CSV
-    - 'token_cleared'   → actualizeaza token in CSV; returneaza noul token
-                          (apelantul trebuie sa il trimita in browser via JS)
+    Repara conexiunea dupa browser update sau stergere localStorage.
+    Semnatura simplificata: nu mai primeste calea CSV.
     """
     if status not in ('browser_updated', 'token_cleared'):
         return None
 
-    df  = pd.read_csv(devices_csv)
     now = datetime.utcnow().isoformat()
-    idx = df[df['device_id'] == device['device_id']].index
 
     if status == 'browser_updated':
-        df.loc[idx, 'fingerprint_hash'] = new_fingerprint
-        df.loc[idx, 'last_seen']        = now
-        df.to_csv(devices_csv, index=False)
-        return None
+        update('devices',
+               {'fingerprint_hash': new_fingerprint, 'last_seen': now},
+               {'device_id': device['device_id']})
 
-    if status == 'token_cleared':
-        df.loc[idx, 'token']     = new_token
-        df.loc[idx, 'last_seen'] = now
-        df.to_csv(devices_csv, index=False)
+    elif status == 'token_cleared':
+        update('devices',
+               {'token': new_token, 'last_seen': now},
+               {'device_id': device['device_id']})
         return new_token
 
+    return None
 
-def create_device(user_id, fingerprint, token, devices_csv):
+
+def create_device(user_id, fingerprint, token):
     """
-    Creeaza un rand nou in devices.csv pentru un device necunoscut.
-    Enrollment incepe de la 0.
-    Returneaza dict-ul noului device (ca sa il putem folosi imediat).
+    Creeaza un device nou in baza de date.
+    Semnatura simplificata: nu mai primeste calea CSV.
+    Returneaza dict-ul noului device.
     """
     now       = datetime.utcnow().isoformat()
     device_id = str(uuid.uuid4())
@@ -127,34 +124,31 @@ def create_device(user_id, fingerprint, token, devices_csv):
         'token':            token,
         'first_seen':       now,
         'last_seen':        now,
+        'trusted':          0,
         'login_count':      0,
         'enrolled':         0,
     }
-
-    with open(devices_csv, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=new_device.keys())
-        writer.writerow(new_device)
-
+    insert('devices', new_device)
     return new_device
 
 
-def increment_device_login_count(device_id, devices_csv):
+def increment_device_login_count(device_id):
     """
-    Incrementeaza login_count pentru device-ul specificat.
-    Daca atinge ENROLLMENT_LOGINS (20), seteaza enrolled=1.
-    Actualizeaza si last_seen.
+    Incrementeaza login_count. Seteaza enrolled=1 la ENROLLMENT_LOGINS.
+    Semnatura simplificata: nu mai primeste calea CSV.
     """
-    df  = pd.read_csv(devices_csv)
-    idx = df[df['device_id'] == device_id].index
+    db = get_db()
+    row = db.execute(
+        "SELECT login_count FROM devices WHERE device_id=?", [device_id]
+    ).fetchone()
 
-    if idx.empty:
+    if not row:
         return
 
-    df.loc[idx, 'login_count'] += 1
-    df.loc[idx, 'last_seen']   = datetime.utcnow().isoformat()
+    new_count = row['login_count'] + 1
+    enrolled  = 1 if new_count >= ENROLLMENT_LOGINS else 0
+    now       = datetime.utcnow().isoformat()
 
-    new_count = int(df.loc[idx[0], 'login_count'])
-    if new_count >= ENROLLMENT_LOGINS:
-        df.loc[idx, 'enrolled'] = 1
-
-    df.to_csv(devices_csv, index=False)
+    update('devices',
+           {'login_count': new_count, 'enrolled': enrolled, 'last_seen': now},
+           {'device_id': device_id})
