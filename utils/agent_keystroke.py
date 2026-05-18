@@ -306,6 +306,29 @@ def compare_profiles(user_id, device_id, ks_raw):
     }
 
 
+def analyze(user_id, device_id, ks_raw):
+    """
+    Returneaza decizia locala a agentului keystroke.
+    Apeleaza compare_profiles() intern si mapeaza scorul la o decizie.
+    """
+    result = compare_profiles(user_id, device_id, ks_raw)
+    score  = result['keystroke_score']
+    status = result['status']
+
+    if status in ('insufficient_data', 'enrollment', 'parse_error',
+                  'insufficient_chars', 'profile_error'):
+        decision = 'insufficient_data'
+    elif score >= 0.3:
+        decision = 'accept'
+    elif score >= 0.1:
+        decision = 'uncertain'
+    else:
+        decision = 'reject'
+
+    result['decision'] = decision
+    return result
+
+
 # ── Salvare proba (apelata din app.py) ─────────────────────────────────────
 
 def save_keystroke_sample(user_id, device_id, login_id, ks_raw,

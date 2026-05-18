@@ -246,7 +246,34 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_known_ips_user     ON known_ips(user_id, ip_address);
         CREATE INDEX IF NOT EXISTS idx_sec_events_user    ON security_events(user_id);
         CREATE INDEX IF NOT EXISTS idx_ml_log_user_device ON ml_log(user_id, device_id);
+    
+        -- Tabele pentru agentul de recunoastere faciala
+        CREATE TABLE IF NOT EXISTS face_profiles (
+            profile_id     TEXT PRIMARY KEY,
+            user_id        TEXT NOT NULL REFERENCES users(user_id),
+            embedding_json TEXT NOT NULL,
+            model_name     TEXT DEFAULT 'Facenet',
+            created_at     TEXT NOT NULL,
+            is_active      INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS face_attempts (
+            attempt_id   TEXT PRIMARY KEY,
+            user_id      TEXT NOT NULL,
+            login_id     TEXT NOT NULL,
+            distance     REAL,
+            decision     TEXT,
+            attempted_at TEXT NOT NULL
+        );                 
     """)
+
+    # Migrare, adauga face_enabled daca nu exista
+    try:
+        db.execute("ALTER TABLE users ADD COLUMN face_enabled INTEGER DEFAULT 0")
+        db.commit()
+    except Exception:
+        pass  # coloana exista deja
+
     db.commit()
 
 

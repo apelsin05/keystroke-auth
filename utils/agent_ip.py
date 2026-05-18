@@ -40,6 +40,20 @@ def score_ip(user_id, ip_address):
     )
     return 1.0 if row else 0.0
 
+def analyze(user_id, ip_address):
+    """
+    Returneaza decizia locala a agentului IP.
+    Spre deosebire de score_ip(), nu returneaza un float.
+    Returneaza o decizie explicita pentru orchestrator.
+    """
+    ip_score = score_ip(user_id, ip_address)
+    decision = 'accept' if ip_score == 1.0 else 'uncertain'
+
+    return {
+        'decision': decision,
+        'ip_score': ip_score,
+        'status':   'known_ip' if ip_score == 1.0 else 'new_ip'
+    }
 
 def record_ip(user_id, ip_address, ip_info):
     """

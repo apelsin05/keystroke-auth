@@ -24,8 +24,8 @@ from utils.device_fingerprint import (
     find_device, repair_device_connection, create_device,
     increment_device_login_count
 )
-from utils.agent_keystroke import compare_profiles, save_keystroke_sample
-from utils.agent_ip import get_ip_info, score_ip, record_ip
+from utils.agent_keystroke import compare_profiles, save_keystroke_sample, analyze as ks_analyze
+from utils.agent_ip import get_ip_info, score_ip, record_ip, analyze as ip_analyze
 from utils.orchestrator import decide
 
 # ── App setup ──────────────────────────────────────────────────────────────
@@ -581,17 +581,23 @@ def two_fa():
                                   attempt_label='enrollment_genuine')
             sample_added = True
         else:
-            ks_result = compare_profiles(user_id, device_id, ks_raw)
+            ks_result = ks_analyze(user_id, device_id, ks_raw)
             save_keystroke_sample(user_id, device_id, login_id, ks_raw,
                                   attempt_label='test_genuine')
             sample_added = True
             if ks_result['keystroke_score'] < 0.3:
                 login_status = 'unlawful'
                 send_unlawful_login_email(user['email'], format_device_info(device_info), now)
+    
+    ks_decision   = ks_result.get('decision', 'insufficient_data')
+    ip_result     = {'decision': 'accept' if ip_score == 1.0 else 'uncertain',
+                    'ip_score': ip_score}
+    face_decision = 'opted_out'   # placeholder pana la implementarea agentului facial
 
-    result      = decide(ks_result['keystroke_score'], ip_score)
+    result      = decide(ks_decision, ip_result['decision'], face_decision)
     decision    = result['decision']
-    final_score = result['final_score']
+    final_score = ks_result['keystroke_score'] * 0.7 + ip_score * 0.3  # pastrat doar pt log
+        
 
     print(f"[DEBUG] keystroke={ks_result['keystroke_score']:.3f} "
           f"raw={ks_result.get('score_raw')} ip={ip_score:.3f} decision={decision}")
