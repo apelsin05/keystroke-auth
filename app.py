@@ -340,6 +340,125 @@ def login():
         if status == 'token_cleared':
             session['new_device_token'] = new_token
 
+    # ── Scoring + decizie orchestrator (inainte de 2FA) ─────────────────────
+    login_id  = str(uuid.uuid4())
+    now       = datetime.utcnow().isoformat()
+    user_id   = user['user_id']
+    device_id = device['device_id']
+
+    device_login_count_rows = execute_query(
+        "SELECT login_count FROM devices WHERE device_id=? LIMIT 1", [device_id]
+    )
+    device_login_count = int(device_login_count_rows[0]['login_count']) if device_login_count_rows else 0
+
+    ks_result = {'keystroke_score': 1.0, 'score_raw': None,
+                 'threshold': None, 'n_enrollment': 0,
+                 'features': None, 'profile': None,
+                 'status': 'enrollment', 'decision': 'insufficient_data'}
+
+    if int(user['keystroke_enabled']) == 1 and device_login_count >= ENROLLMENT_LOGINS:
+        ks_result = ks_analyze(user_id, device_id, ks_raw)
+
+    ks_decision   = ks_result.get('decision', 'insufficient_data')
+    ip_address    = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+    ip_info       = get_ip_info(ip_address)
+    ip_score      = score_ip(user_id, ip_address)
+    ip_decision   = 'accept' if ip_score == 1.0 else 'uncertain'
+    face_decision = 'opted_out'
+
+    orch_result = decide(ks_decision, ip_decision, face_decision)
+    decision    = orch_result['decision']
+
+    print(f"[DEBUG] keystroke={ks_result['keystroke_score']:.3f} "
+          f"raw={ks_result.get('score_raw')} ip={ip_score:.3f} decision={decision}")
+
+    # ── Cale directa: allow fara 2FA ─────────────────────────────────────────
+    if decision == 'allow':
+        record_ip(user_id, ip_address, ip_info)
+        sample_added = False
+
+        if int(user['keystroke_enabled']) == 1:
+            label = 'enrollment_genuine' if device_login_count < ENROLLMENT_LOGINS else 'test_genuine'
+            save_keystroke_sample(user_id, device_id, login_id, ks_raw, attempt_label=label)
+            sample_added = True
+
+        final_score = ks_result['keystroke_score'] * 0.7 + ip_score * 0.3
+
+        historical_suspicious = False
+        failed_count_rows = execute_query(
+            "SELECT COUNT(*) as cnt FROM security_events WHERE user_id=? AND event_type='failed_2fa'",
+            [user_id]
+        )
+        if failed_count_rows and failed_count_rows[0]['cnt'] >= 3:
+            historical_suspicious = True
+
+        login_status = (
+            'active_flagged_suspicious'
+            if (had_failed_password or historical_suspicious)
+            else 'active'
+        )
+
+        if ks_result['keystroke_score'] < 0.3:
+            login_status = 'unlawful'
+            send_unlawful_login_email(user['email'], format_device_info(str(device_info_dict)), now)
+
+        log_ml_event(user_id, device_id, login_id, ks_result,
+                     ip_score, final_score, decision, login_status, sample_added)
+
+        insert('login_attempts', {
+            'login_id':        login_id,
+            'user_id':         user_id,
+            'device_id':       device_id,
+            'timestamp':       now,
+            'device_info':     str(device_info_dict),
+            'location':        f"{ip_info.get('city')}, {ip_info.get('country')}",
+            'ip_address':      ip_address,
+            'keystroke_score': ks_result['keystroke_score'],
+            'ip_score':        ip_score,
+            'final_score':     final_score,
+            'classification':  ks_result.get('status'),
+            'decision':        decision,
+            'twofa_passed':    0,
+            'status':          login_status,
+        })
+        insert('sessions', {
+            'session_id': login_id,
+            'user_id':    user_id,
+            'status':     login_status,
+            'created_at': now,
+        })
+
+        if login_status == 'active_flagged_suspicious':
+            confirm_token = str(uuid.uuid4())
+            token_expires = (datetime.utcnow() + timedelta(hours=24)).isoformat()
+            confirm_url   = url_for('confirm_identity', token=confirm_token, _external=True)
+            insert('security_events', {
+                'event_id':         str(uuid.uuid4()),
+                'user_id':          user_id,
+                'device_id':        device_id,
+                'event_type':       'suspicious_login',
+                'timestamp':        now,
+                'details':          'flagged la login direct (fara 2FA)',
+                'confirm_token':    confirm_token,
+                'token_expires_at': token_expires,
+                'resolved':         0,
+            })
+            send_confirm_identity_email(user['email'], confirm_url, now,
+                                        format_device_info(str(device_info_dict)))
+
+        increment_device_login_count(device_id)
+        new_token = session.pop('new_device_token', None)
+        session['user_id']  = user_id
+        session['username'] = user['username']
+        session.permanent   = True
+
+        response = make_response(redirect(url_for('dashboard')))
+        if new_token:
+            response.set_cookie('device_token', new_token,
+                                max_age=60*60*24*365, httponly=False, samesite='Lax')
+        return response
+
+    # ── Cale 2FA: orchestratorul cere verificare suplimentara ─────────────────
     code       = generate_2fa_code()
     session_id = str(uuid.uuid4())
     expires_at = (datetime.utcnow() + timedelta(minutes=4)).isoformat()
@@ -353,27 +472,40 @@ def login():
 
     append_auth_audit(
         stage='2fa_code_generated',
-        user_id=user['user_id'],
+        user_id=user_id,
         email=user['email'],
         session_id=session_id,
-        device_id=device['device_id'],
-        ip_address=request.remote_addr,
+        device_id=device_id,
+        ip_address=ip_address,
         stored_code=code,
         expires_at=expires_at,
         is_expired=False,
         twofa_attempts=0,
-        reason='code_created_and_emailed',
+        reason=f'orchestrator_decision={decision}',
         device_info=str(device_info_dict)
     )
 
-    session['pending_user_id']       = user['user_id']
-    session['pending_session_id']    = session_id
-    session['pending_keystrokes']    = ks_raw
-    session['pending_device_id']     = device['device_id']
-    session['pending_device_info']   = str(device_info_dict)
-    session['twofa_attempts']        = 0
-    session['had_failed_password']   = had_failed_password
-    session['impostor_sample_saved'] = False
+    session['pending_user_id']            = user_id
+    session['pending_session_id']         = session_id
+    session['pending_keystrokes']         = ks_raw
+    session['pending_device_id']          = device_id
+    session['pending_device_info']        = str(device_info_dict)
+    session['twofa_attempts']             = 0
+    session['had_failed_password']        = had_failed_password
+    session['impostor_sample_saved']      = False
+    session['pending_ks_score']           = float(ks_result['keystroke_score'])
+    session['pending_ks_score_raw']       = float(ks_result['score_raw']) if ks_result['score_raw'] is not None else None
+    session['pending_ks_threshold']       = float(ks_result['threshold']) if ks_result['threshold'] is not None else None
+    session['pending_ks_status']          = str(ks_result.get('status', 'enrollment'))
+    session['pending_ks_decision']        = str(ks_decision)
+    session['pending_ip_score']           = float(ip_score)
+    session['pending_ip_city']            = str(ip_info.get('city') or '')
+    session['pending_ip_country']         = str(ip_info.get('country') or '')
+    session['pending_ip_address']         = ip_address
+    session['pending_orchestrator_dec']   = decision
+    session['pending_login_id']           = login_id
+    session['pending_login_timestamp']    = now
+    session['pending_device_login_count'] = int(device_login_count)
     return redirect(url_for('two_fa'))
 
 
@@ -538,10 +670,33 @@ def two_fa():
     device_id   = session.get('pending_device_id')
     device_info = session.get('pending_device_info', '')
     user        = find_user_by_id(user_id)
-    now         = datetime.utcnow().isoformat()
-    login_id    = str(uuid.uuid4())
-    attempts              = session.get('twofa_attempts', 0)
-    had_failed_password   = session.get('had_failed_password', False)
+    attempts    = session.get('twofa_attempts', 0)
+    had_failed_password = session.get('had_failed_password', False)
+
+    # Preia rezultatele de scoring calculate deja in login()
+    ks_result          = session.get('pending_ks_result', {
+                             'keystroke_score': 1.0, 'score_raw': None,
+                             'threshold': None, 'n_enrollment': 0,
+                             'features': None, 'profile': None,
+                             'status': 'enrollment', 'decision': 'insufficient_data'})
+    ip_score           = session.get('pending_ip_score', 1.0)
+    ip_info            = session.get('pending_ip_info', {})
+    ip_address         = session.get('pending_ip_address', request.remote_addr)
+    decision           = session.get('pending_orchestrator_dec', '2fa')
+    login_id           = session.get('pending_login_id', str(uuid.uuid4()))
+    now                = session.get('pending_login_timestamp', datetime.utcnow().isoformat())
+    device_login_count = session.get('pending_device_login_count', 0)
+
+    record_ip(user_id, ip_address, ip_info)
+
+    # Salveaza sample keystroke
+    sample_added = False
+    if user and int(user['keystroke_enabled']) == 1:
+        label = 'enrollment_genuine' if device_login_count < ENROLLMENT_LOGINS else 'test_genuine'
+        save_keystroke_sample(user_id, device_id, login_id, ks_raw, attempt_label=label)
+        sample_added = True
+
+    final_score = ks_result['keystroke_score'] * 0.7 + ip_score * 0.3
 
     # Verificare istoricul de failed_2fa
     historical_suspicious = False
@@ -558,46 +713,10 @@ def two_fa():
         else 'active'
     )
 
-    ip_address = request.remote_addr
-    ip_info    = get_ip_info(ip_address)
-    ip_score   = score_ip(user_id, ip_address)
-    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
-    record_ip(user_id, ip_address, ip_info)
-
-    # ── Scoring keystroke ──────────────────────────────────────────────────
-    device_login_count_rows = execute_query(
-        "SELECT login_count FROM devices WHERE device_id=? LIMIT 1", [device_id]
-    )
-    device_login_count = int(device_login_count_rows[0]['login_count']) if device_login_count_rows else 0
-
-    ks_result = {'keystroke_score': 1.0, 'score_raw': None,
-                 'threshold': None, 'n_enrollment': 0,
-                 'features': None, 'profile': None, 'status': 'enrollment'}
-    sample_added = False
-
-    if user and int(user['keystroke_enabled']) == 1:
-        if device_login_count < ENROLLMENT_LOGINS:
-            save_keystroke_sample(user_id, device_id, login_id, ks_raw,
-                                  attempt_label='enrollment_genuine')
-            sample_added = True
-        else:
-            ks_result = ks_analyze(user_id, device_id, ks_raw)
-            save_keystroke_sample(user_id, device_id, login_id, ks_raw,
-                                  attempt_label='test_genuine')
-            sample_added = True
-            if ks_result['keystroke_score'] < 0.3:
-                login_status = 'unlawful'
-                send_unlawful_login_email(user['email'], format_device_info(device_info), now)
-    
-    ks_decision   = ks_result.get('decision', 'insufficient_data')
-    ip_result     = {'decision': 'accept' if ip_score == 1.0 else 'uncertain',
-                    'ip_score': ip_score}
-    face_decision = 'opted_out'   # placeholder pana la implementarea agentului facial
-
-    result      = decide(ks_decision, ip_result['decision'], face_decision)
-    decision    = result['decision']
-    final_score = ks_result['keystroke_score'] * 0.7 + ip_score * 0.3  # pastrat doar pt log
-        
+    if ks_result['keystroke_score'] < 0.3:
+        login_status = 'unlawful'
+        if user:
+            send_unlawful_login_email(user['email'], format_device_info(device_info), now)
 
     print(f"[DEBUG] keystroke={ks_result['keystroke_score']:.3f} "
           f"raw={ks_result.get('score_raw')} ip={ip_score:.3f} decision={decision}")
@@ -642,7 +761,7 @@ def two_fa():
             'device_id':        device_id,
             'event_type':       'suspicious_login',
             'timestamp':        now,
-            'details':          f'{attempts} failed attempts before success',
+            'details':          f'{attempts} failed 2FA attempts before success',
             'confirm_token':    confirm_token,
             'token_expires_at': token_expires,
             'resolved':         0,
@@ -657,7 +776,10 @@ def two_fa():
     new_token = session.pop('new_device_token', None)
     for k in ['pending_user_id', 'pending_session_id', 'pending_keystrokes',
               'pending_device_id', 'pending_device_info', 'twofa_attempts',
-              'had_failed_password', 'impostor_sample_saved']:
+              'had_failed_password', 'impostor_sample_saved',
+              'pending_ks_result', 'pending_ip_score', 'pending_ip_info',
+              'pending_ip_address', 'pending_orchestrator_dec', 'pending_login_id',
+              'pending_login_timestamp', 'pending_device_login_count']:
         session.pop(k, None)
 
     session['user_id']  = user_id
