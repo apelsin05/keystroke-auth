@@ -27,8 +27,8 @@ def decide(ks_decision, ip_decision, face_decision='opted_out'):
 
     # Enrollment in curs. nu avem profil format, nu penalizam
     if ks_decision == 'insufficient_data':
-        return _result('allow', ks_decision, ip_decision, face_decision,
-                       'enrollment in curs, fara profil format')
+        return _result('2fa', ks_decision, ip_decision, face_decision,
+                       'enrollment in curs, fara profil format, verificare obligatorie')
 
     # Mismatch sever la keystroke. re-enrollment obligatoriu
     if ks_decision == 'reject':

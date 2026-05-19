@@ -8,7 +8,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import bcrypt
 from flask import (
-    Flask, render_template, request, redirect,
+    Flask, jsonify, render_template, request, redirect,
     url_for, session, flash, make_response
 )
 from flask_session import Session
@@ -27,6 +27,7 @@ from utils.device_fingerprint import (
 from utils.agent_keystroke import compare_profiles, save_keystroke_sample, analyze as ks_analyze
 from utils.agent_ip import get_ip_info, score_ip, record_ip, analyze as ip_analyze
 from utils.orchestrator import decide
+from utils.agent_face import enroll as face_enroll, analyze as face_analyze
 
 # ── App setup ──────────────────────────────────────────────────────────────
 
@@ -279,7 +280,87 @@ def register_step2():
     session.pop('reg_keystrokes', None)
 
     flash('Cont creat cu succes! Te poti autentifica.', 'success')
-    return redirect(url_for('login'))
+    
+    
+@app.route('/register/face', methods=['POST'])
+def register_face():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Neautentificat'}), 401
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'status': 'error', 'message': 'Request invalid'}), 400
+
+    frames = data.get('frames', [])
+    if len(frames) != 3:
+        return jsonify({'status': 'error', 'message': 'Sunt necesare exact 3 cadre'}), 400
+
+    result = face_enroll(user_id, frames)
+
+    if result['status'] == 'enrolled':
+        return jsonify(result), 200
+    else:
+        return jsonify(result), 400
+
+
+@app.route('/dev/face', methods=['GET'])
+def dev_face():
+    if not app.debug:
+        return 'Not available in production', 403
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Dev — Face Test</title></head>
+    <body>
+      <h2>Test agent facial</h2>
+      <video id="video" width="400" autoplay></video><br><br>
+      <button onclick="capture()">Capturează și testează</button>
+      <canvas id="canvas" width="400" height="300" style="display:none"></canvas>
+      <pre id="result" style="margin-top:20px; background:#f0f0f0; padding:10px"></pre>
+
+      <script>
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => { document.getElementById('video').srcObject = stream; })
+          .catch(err => { document.getElementById('result').textContent = 'Camera indisponibila: ' + err; });
+
+        function capture() {
+          const video  = document.getElementById('video');
+          const canvas = document.getElementById('canvas');
+          canvas.getContext('2d').drawImage(video, 0, 0, 400, 300);
+          const frame  = canvas.toDataURL('image/jpeg');
+
+          fetch('/dev/face/analyze', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ frame: frame })
+          })
+          .then(r => r.json())
+          .then(data => {
+            document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+          });
+        }
+      </script>
+    </body>
+    </html>
+    """
+    return html
+
+
+@app.route('/dev/face/analyze', methods=['POST'])
+def dev_face_analyze():
+    if not app.debug:
+        return jsonify({'error': 'Not available in production'}), 403
+
+    data = request.get_json()
+    if not data or 'frame' not in data:
+        return jsonify({'status': 'error', 'message': 'Cadru lipsă'}), 400
+
+    user_id = session.get('user_id', 'a1b2e510-ab70-4421-b692-4de11dd1a1ef')
+
+    result = face_analyze(user_id, data['frame'], login_id='dev-test')
+    return jsonify(result), 200
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -329,6 +410,7 @@ def login():
 
     # find_device nu mai primeste calea CSV
     status, device = find_device(user['user_id'], fingerprint, incoming_token)
+    print(f"[DEVICE DEBUG] status={status} token_received='{incoming_token[:8] if incoming_token else 'EMPTY'}...' fingerprint={fingerprint[:8]}...")
 
     if status == 'new_device':
         new_token = generate_device_token()
@@ -350,6 +432,7 @@ def login():
         "SELECT login_count FROM devices WHERE device_id=? LIMIT 1", [device_id]
     )
     device_login_count = int(device_login_count_rows[0]['login_count']) if device_login_count_rows else 0
+    print(f"[KS DEBUG] keystroke_enabled={user['keystroke_enabled']} device_login_count={device_login_count} threshold={ENROLLMENT_LOGINS}")
 
     ks_result = {'keystroke_score': 1.0, 'score_raw': None,
                  'threshold': None, 'n_enrollment': 0,
