@@ -7,6 +7,7 @@ const statusMsg     = document.getElementById('face-status');
 let frames       = [];
 let alignedSince = null;
 let capturing    = false;
+let cameraStream = null; 
 
 const ALIGN_TIMEOUT    = 3000;
 const CAPTURE_INTERVAL = 1000;
@@ -21,6 +22,7 @@ const TOLERANCE = 0.15;
 async function startCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    cameraStream = stream; 
     videoElement.srcObject = stream;
     videoElement.onloadedmetadata = () => {
       canvasElement.width  = videoElement.clientWidth;
@@ -170,7 +172,7 @@ function captureFrames() {
       statusMsg.textContent = 'Capturez... (3/3)';
       drawVideoFrame();
       frames.push(canvasElement.toDataURL('image/jpeg', 0.85));
-      sendFrames();
+      showConfirmation();
     }, CAPTURE_INTERVAL);
   }, CAPTURE_INTERVAL);
 }
@@ -184,8 +186,10 @@ async function sendFrames() {
     });
 
     if (res.ok) {
-      statusMsg.textContent = '✓ Față înregistrată cu succes!';
+      statusMsg.textContent = 'Față înregistrată cu succes!';
       statusMsg.style.color = 'green';
+      stopCamera();
+      if (typeof window.onFaceEnrollSuccess === 'function') window.onFaceEnrollSuccess();
     } else {
       const data = await res.json();
       statusMsg.textContent = data.message || 'Eroare la înregistrarea feței.';
@@ -199,5 +203,34 @@ async function sendFrames() {
   }
 }
 
-// ── Start ──────────────────────────────────────────────────────────────────
-startCamera();
+// ── Bloc 8 — Confirmare cadre capturate ───────────────────────────────────
+function showConfirmation() {
+  document.getElementById('face-thumb-1').src = frames[0];
+  document.getElementById('face-thumb-2').src = frames[1];
+  document.getElementById('face-thumb-3').src = frames[2];
+  document.getElementById('face-confirm-section').style.display = '';
+  canvasElement.parentElement.style.display = 'none';
+  statusMsg.textContent = 'Verifica imaginile capturate.';
+  statusMsg.style.color = '';
+}
+
+function resetCapture() {
+  frames       = [];
+  alignedSince = null;
+  capturing    = false;
+  document.getElementById('face-confirm-section').style.display = 'none';
+  canvasElement.parentElement.style.display = '';
+  statusMsg.textContent = 'Pozitioneaza fata in chenar';
+  statusMsg.style.color = '';
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+}
+
+// ── Wiring butoane confirmare ──────────────────────────────────────────────
+document.getElementById('face-confirm-yes').addEventListener('click', sendFrames);
+document.getElementById('face-confirm-no').addEventListener('click', resetCapture);

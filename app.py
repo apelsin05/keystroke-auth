@@ -6,6 +6,8 @@ import string
 from datetime import datetime, timedelta
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from utils.agent_face import enroll as face_enroll, analyze as face_analyze, revoke_enrollment
+
 import bcrypt
 from flask import (
     Flask, jsonify, render_template, request, redirect,
@@ -312,6 +314,15 @@ def face_enroll_page():
     if not user:
         return redirect(url_for('login'))
     return render_template('face_enroll.html', user=user)
+
+@app.route('/settings/revoke-face', methods=['POST'])
+def revoke_face():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    revoke_enrollment(session['user_id'])
+    flash('Profilul facial a fost revocat.', 'info')
+    return redirect(url_for('dashboard'))
+
 
 @app.route('/dev/face', methods=['GET'])
 def dev_face():

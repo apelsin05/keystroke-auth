@@ -39,13 +39,37 @@
         <canvas id="face-canvas"></canvas>
       </div>
       <p id="face-status" class="face-status-msg">Se inițializează camera...</p>
-      <a href="/dashboard" class="btn-outline">← Înapoi la dashboard</a>
+
+      <div id="face-confirm-section" style="display:none; margin-top:1.5rem; width:100%;">
+        <p style="text-align:center; color:var(--muted); font-size:0.875rem; margin-bottom:1rem;">
+          Verifica daca imaginile sunt clare si fata este vizibila:
+        </p>
+        <div style="display:flex; gap:0.75rem; justify-content:center; margin-bottom:1.25rem;">
+          <img id="face-thumb-1" style="width:120px; height:90px; object-fit:cover; border-radius:8px; border:2px solid var(--border);">
+          <img id="face-thumb-2" style="width:120px; height:90px; object-fit:cover; border-radius:8px; border:2px solid var(--border);">
+          <img id="face-thumb-3" style="width:120px; height:90px; object-fit:cover; border-radius:8px; border:2px solid var(--border);">
+        </div>
+        <p style="text-align:center; font-weight:600; margin-bottom:0.75rem;">Imaginile sunt corecte?</p>
+        <div style="display:flex; gap:0.75rem; justify-content:center;">
+          <button id="face-confirm-yes" class="btn-primary">Da, continua</button>
+          <button id="face-confirm-no" class="btn-outline">Nu, reia capturarea</button>
+        </div>
+      </div>
+
+      <a href="/dashboard" class="btn-outline" style="margin-top:1rem;">← Înapoi la dashboard</a>
     </div>
 
   </div>
 </div>
 
 <script src="{{ url_for('static', filename='js/face_capture.js') }}"></script>
+<script>
+  window.onFaceEnrollSuccess = function () {
+    setTimeout(function () { window.location.href = '/dashboard'; }, 2000);
+  };
+  startCamera();
+</script>
+
 
 </body>
 </html>
