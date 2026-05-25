@@ -315,7 +315,7 @@ def dev_face():
     <head><title>Dev — Face Test</title></head>
     <body>
       <h2>Test agent facial</h2>
-      <video id="video" width="400" autoplay></video><br><br>
+      <video id="video" width="400" autoplay style="transform: scaleX(-1)"></video>
       <button onclick="capture()">Capturează și testează</button>
       <canvas id="canvas" width="400" height="300" style="display:none"></canvas>
       <pre id="result" style="margin-top:20px; background:#f0f0f0; padding:10px"></pre>
@@ -328,7 +328,10 @@ def dev_face():
         function capture() {
           const video  = document.getElementById('video');
           const canvas = document.getElementById('canvas');
-          canvas.getContext('2d').drawImage(video, 0, 0, 400, 300);
+          const ctx = canvas.getContext('2d');
+          ctx.translate(400, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, 0, 0, 400, 300);
           const frame  = canvas.toDataURL('image/jpeg');
 
           fetch('/dev/face/analyze', {
