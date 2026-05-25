@@ -306,6 +306,15 @@ def register_face():
     else:
         return jsonify(result), 400
 
+
+@app.route('/register/face', methods=['DELETE'])
+def revoke_face_api():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Neautentificat'}), 401
+    revoke_enrollment(user_id)   # funcția există deja, importată ca revoke_enrollment
+    return jsonify({'status': 'revoked'}), 200
+
 @app.route('/face/enroll', methods=['GET'])
 def face_enroll_page():
     if 'user_id' not in session:
@@ -468,8 +477,9 @@ def login():
     ks_decision   = ks_result.get('decision', 'insufficient_data')
     ip_address    = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
     ip_info       = get_ip_info(ip_address)
-    ip_score      = score_ip(user_id, ip_address)
-    ip_decision   = 'accept' if ip_score == 1.0 else 'uncertain'
+    ip_result     = ip_analyze(user_id, ip_address)
+    ip_score      = ip_result['ip_score']
+    ip_decision   = ip_result['decision']
     face_decision = 'opted_out'
 
     orch_result = decide(ks_decision, ip_decision, face_decision)

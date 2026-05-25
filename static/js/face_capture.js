@@ -231,6 +231,6 @@ function stopCamera() {
   }
 }
 
-// ── Wiring butoane confirmare ──────────────────────────────────────────────
+// ── Wiring butoane confirmare 
 document.getElementById('face-confirm-yes').addEventListener('click', sendFrames);
 document.getElementById('face-confirm-no').addEventListener('click', resetCapture);
