@@ -280,6 +280,7 @@ def register_step2():
     session.pop('reg_keystrokes', None)
 
     flash('Cont creat cu succes! Te poti autentifica.', 'success')
+    return redirect(url_for('login'))
     
     
 @app.route('/register/face', methods=['POST'])
@@ -303,6 +304,14 @@ def register_face():
     else:
         return jsonify(result), 400
 
+@app.route('/face/enroll', methods=['GET'])
+def face_enroll_page():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    user = find_user_by_id(session['user_id'])
+    if not user:
+        return redirect(url_for('login'))
+    return render_template('face_enroll.html', user=user)
 
 @app.route('/dev/face', methods=['GET'])
 def dev_face():
@@ -956,9 +965,14 @@ def dashboard():
             'enrolled':     enrolled,
             'progress_pct': min(int(login_count / 20 * 100), 100),
         })
+    
+    needs_face_enroll = (
+        int(user.get('keystroke_enabled', 0)) == 1 and
+        int(user.get('face_enabled', 0)) == 0
+    )
 
     return render_template('dashboard.html', user=user, logins=logins, devices=devices,
-                           enrollment_target=20)
+                           enrollment_target=20, needs_face_enroll=needs_face_enroll)
 
 
 @app.route('/settings/toggle-keystroke', methods=['POST'])

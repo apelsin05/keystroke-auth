@@ -1,4 +1,4 @@
-// ── Bloc 1 — Configurație și stare globală ────────────────────────────────
+// ── Bloc 1 — Configurație și stare globală ─────────────────────────────────
 const videoElement  = document.getElementById('face-video');
 const canvasElement = document.getElementById('face-canvas');
 const ctx           = canvasElement.getContext('2d');
@@ -11,14 +11,20 @@ let capturing    = false;
 const ALIGN_TIMEOUT    = 3000;
 const CAPTURE_INTERVAL = 1000;
 
+// Proporțiile box-ului ghid fix, relative la dimensiunile canvas-ului
+const GUIDE = { x: 0.20, y: 0.20, w: 0.60, h: 0.60 };
+
+// Toleranță de aliniere față-box (fracție din înălțimea canvas-ului)
+const TOLERANCE = 0.15;
+
 // ── Bloc 2 — startCamera() ────────────────────────────────────────────────
 async function startCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true });
     videoElement.srcObject = stream;
     videoElement.onloadedmetadata = () => {
-        canvasElement.width  = videoElement.clientWidth;
-        canvasElement.height = videoElement.clientHeight;
+      canvasElement.width  = videoElement.clientWidth;
+      canvasElement.height = videoElement.clientHeight;
       setupMediaPipe();
     };
   } catch (err) {
@@ -44,76 +50,125 @@ function setupMediaPipe() {
   requestAnimationFrame(loop);
 }
 
-// ── Bloc 4 — onResults() + logica de aliniere ─────────────────────────────
+// ── Bloc 4 — drawGuideBox() ───────────────────────────────────────────────
+function drawGuideBox(color) {
+  const w = canvasElement.width;
+  const h = canvasElement.height;
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(w * GUIDE.x, h * GUIDE.y, w * GUIDE.w, h * GUIDE.h);
+}
+
+// ── Bloc 5 — drawVideoFrame() — implementare manuală a object-fit: cover ──
+function drawVideoFrame() {
+  const vW = videoElement.videoWidth;
+  const vH = videoElement.videoHeight;
+  const cW = canvasElement.width;
+  const cH = canvasElement.height;
+
+  const scale = Math.max(cW / vW, cH / vH);
+  const srcW  = cW / scale;
+  const srcH  = cH / scale;
+  const srcX  = (vW - srcW) / 2;
+  const srcY  = (vH - srcH) / 2;
+
+  ctx.drawImage(videoElement, srcX, srcY, srcW, srcH, 0, 0, cW, cH);
+}
+
+// ── Bloc 6 — onResults() + logica de aliniere ─────────────────────────────
 function onResults(results) {
-    
-    ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    const w = canvasElement.width;
-    const h = canvasElement.height;
+  const w = canvasElement.width;
+  const h = canvasElement.height;
+
+  ctx.clearRect(0, 0, w, h);
 
   if (!results.detections || results.detections.length === 0) {
     alignedSince = null;
-    ctx.strokeStyle = 'red';
-    ctx.lineWidth   = 3;
-    ctx.strokeRect(w * 0.2, h * 0.1, w * 0.6, h * 0.8);
-    statusMsg.textContent = 'Poziționează fața în centru';
+    drawGuideBox('red');
+    statusMsg.textContent = 'Poziționează fața în chenar';
     statusMsg.style.color = '';
     return;
   }
 
   const box = results.detections[0].boundingBox;
-  const { xCenter, yCenter } = box;
-  const centered = xCenter >= 0.35 && xCenter <= 0.65 &&
-                   yCenter >= 0.25 && yCenter <= 0.75;
 
-  const rx = (xCenter - box.width  / 2) * w;
-  const ry = (yCenter - box.height / 2) * h;
+  // Coordonate față în pixeli pe canvas
+  const faceTop     = (box.yCenter - box.height / 2) * h;
+  const faceBottom  = (box.yCenter + box.height / 2) * h;
+  const faceCenterX = box.xCenter * w;
+  
+  // debug 
+  console.log({
+  faceTop:     faceTop.toFixed(1),
+  faceBottom:  faceBottom.toFixed(1),
+  guideTop:    (h * GUIDE.y).toFixed(1),
+  guideBottom: (h * (GUIDE.y + GUIDE.h)).toFixed(1),
+  tol:         (h * TOLERANCE).toFixed(1),
+  diffTop:     Math.abs(faceTop    - h * GUIDE.y).toFixed(1),
+  diffBottom:  Math.abs(faceBottom - h * (GUIDE.y + GUIDE.h)).toFixed(1),
+});
 
-  if (centered) {
-    ctx.strokeStyle = 'lime';
-    ctx.lineWidth   = 3;
-    ctx.strokeRect(rx, ry, box.width * w, box.height * h);
+  // Coordonate box ghid în pixeli
+  const guideTop     = h * GUIDE.y;
+  const guideBottom  = h * (GUIDE.y + GUIDE.h);
+  const guideCenterX = w * (GUIDE.x + GUIDE.w / 2);
 
-    if (!capturing) {
-      if (alignedSince === null) {
-        alignedSince = Date.now();
-      }
-      const elapsed = Date.now() - alignedSince;
-      if (elapsed >= ALIGN_TIMEOUT) {
-        captureFrames();
-      } else {
-        const remaining = Math.ceil((ALIGN_TIMEOUT - elapsed) / 1000);
-        statusMsg.textContent = `Stai nemișcat: ${remaining}s`;
-        statusMsg.style.color = '';
-      }
+  const tol = h * TOLERANCE;
+
+  const aligned =
+    Math.abs(faceTop    - guideTop)      < tol &&
+    Math.abs(faceBottom - guideBottom)   < tol &&
+    Math.abs(faceCenterX - guideCenterX) < w * 0.15;
+
+  if (aligned && !capturing) {
+    drawGuideBox('lime');
+
+    if (alignedSince === null) alignedSince = Date.now();
+    const elapsed = Date.now() - alignedSince;
+
+    if (elapsed >= ALIGN_TIMEOUT) {
+      captureFrames();
+    } else {
+      const remaining = Math.ceil((ALIGN_TIMEOUT - elapsed) / 1000);
+      statusMsg.textContent = `Stai nemișcat: ${remaining}s`;
     }
   } else {
     alignedSince = null;
-    ctx.strokeStyle = 'red';
-    ctx.lineWidth   = 3;
-    ctx.strokeRect(rx, ry, box.width * w, box.height * h);
-    statusMsg.textContent = 'Poziționează fața în centru';
+    drawGuideBox('red');
+
+    const faceHeight = faceBottom - faceTop;
+    if (faceHeight < h * GUIDE.h * 0.5) {
+      statusMsg.textContent = 'Apropie-te de cameră';
+    } else if (faceHeight > h * GUIDE.h * 1.3) {
+      statusMsg.textContent = 'Îndepărtează-te puțin';
+    } else if (faceTop > guideTop + tol) {
+      statusMsg.textContent = 'Ridică privirea';
+    } else if (faceBottom < guideBottom - tol) {
+      statusMsg.textContent = 'Coboară puțin';
+    } else {
+      statusMsg.textContent = 'Centrează fața în chenar';
+    }
     statusMsg.style.color = '';
   }
 }
 
-// ── Bloc 5 — captureFrames() și sendFrames() ──────────────────────────────
+// ── Bloc 7 — captureFrames() și sendFrames() ──────────────────────────────
 function captureFrames() {
   capturing = true;
   frames    = [];
 
   statusMsg.textContent = 'Capturez... (1/3)';
-  ctx.drawImage(videoElement, 0, 0);
+  drawVideoFrame();
   frames.push(canvasElement.toDataURL('image/jpeg', 0.85));
 
   setTimeout(() => {
     statusMsg.textContent = 'Capturez... (2/3)';
-    ctx.drawImage(videoElement, 0, 0);
+    drawVideoFrame();
     frames.push(canvasElement.toDataURL('image/jpeg', 0.85));
 
     setTimeout(() => {
       statusMsg.textContent = 'Capturez... (3/3)';
-      ctx.drawImage(videoElement, 0, 0);
+      drawVideoFrame();
       frames.push(canvasElement.toDataURL('image/jpeg', 0.85));
       sendFrames();
     }, CAPTURE_INTERVAL);
@@ -123,9 +178,9 @@ function captureFrames() {
 async function sendFrames() {
   try {
     const res = await fetch('/register/face', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ frames })
+      body:    JSON.stringify({ frames })
     });
 
     if (res.ok) {
@@ -133,20 +188,16 @@ async function sendFrames() {
       statusMsg.style.color = 'green';
     } else {
       const data = await res.json();
-      statusMsg.textContent = data.error || 'Eroare la înregistrarea feței.';
+      statusMsg.textContent = data.message || 'Eroare la înregistrarea feței.';
       statusMsg.style.color = 'red';
-      frames       = [];
-      alignedSince = null;
-      capturing    = false;
+      frames = []; alignedSince = null; capturing = false;
     }
   } catch (err) {
     statusMsg.textContent = 'Eroare de rețea: ' + err.message;
     statusMsg.style.color = 'red';
-    frames       = [];
-    alignedSince = null;
-    capturing    = false;
+    frames = []; alignedSince = null; capturing = false;
   }
 }
 
-// ── Start ─────────────────────────────────────────────────────────────────
+// ── Start ──────────────────────────────────────────────────────────────────
 startCamera();

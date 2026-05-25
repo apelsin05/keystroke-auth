@@ -240,6 +240,52 @@ body {
 .badge-active  { background:rgba(21,128,61,0.1); color:#15803d; border:1.5px solid rgba(21,128,61,0.22); }
 .badge-inactive{ background:rgba(142,122,148,0.1); color:var(--muted); border:1.5px solid rgba(142,122,148,0.2); }
 
+
+/* ── FACE ENROLLMENT ──────────────────────────────────────────────── */
+.face-enroll-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.face-video-wrap {
+  position: relative;
+  width: min(66vw, 340px);
+  aspect-ratio: 3 / 4;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 2.5px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  transform: scaleX(-1);
+}
+
+.face-video-wrap video {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.face-video-wrap canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.face-status-msg {
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-align: center;
+  min-height: 1.4rem;
+}
+
+/* ----------------------------------------------------------------------------- */
+
+
+
 @media (max-width: 768px) {
   .split-container {
     display: block;
@@ -300,5 +346,6 @@ body {
   gap: 0.75rem;
   margin-bottom: 1rem;
 }
+
 
 }

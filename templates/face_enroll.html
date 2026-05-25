@@ -1,0 +1,51 @@
+<!-- contine:
+ container video
+ script pt mediapipe si face_capture.js
+ face status -->
+
+ <!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Înrolare facială</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}"/>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<div class="dashboard-wrapper">
+
+  <nav class="navbar">
+    <div class="navbar-brand">KeystrokeAuth</div>
+    <div class="navbar-user">Autentificat ca <strong>{{ user.username }}</strong></div>
+    <a href="/logout" class="btn-logout">Deconectare</a>
+  </nav>
+
+  <div class="dashboard-content">
+
+    <h1 class="welcome-heading">Înrolare <span>facială</span></h1>
+
+    <p style="color:var(--muted); font-size:0.9rem; text-align:center; max-width:420px; line-height:1.6;">
+      Poziționează-te astfel încât fruntea să atingă marginea de sus a chenarului
+      și bărbia marginea de jos. Chenarul devine verde când ești corect aliniat.
+      Stai nemișcat 3 secunde. 
+    </p>
+
+    <div class="face-enroll-wrap">
+      <div class="face-video-wrap">
+        <video id="face-video" autoplay muted playsinline></video>
+        <canvas id="face-canvas"></canvas>
+      </div>
+      <p id="face-status" class="face-status-msg">Se inițializează camera...</p>
+      <a href="/dashboard" class="btn-outline">← Înapoi la dashboard</a>
+    </div>
+
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/face_capture.js') }}"></script>
+
+</body>
+</html>
