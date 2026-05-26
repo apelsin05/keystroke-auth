@@ -7,7 +7,8 @@ const statusMsg     = document.getElementById('face-status');
 let frames       = [];
 let alignedSince = null;
 let capturing    = false;
-let cameraStream = null; 
+let cameraStream = null;
+let paused       = false;
 
 const ALIGN_TIMEOUT    = 3000;
 const CAPTURE_INTERVAL = 1000;
@@ -79,6 +80,7 @@ function drawVideoFrame() {
 
 // ── Bloc 6 — onResults() + logica de aliniere ─────────────────────────────
 function onResults(results) {
+  if (paused) return;
   const w = canvasElement.width;
   const h = canvasElement.height;
 
@@ -205,12 +207,13 @@ async function sendFrames() {
 
 // ── Bloc 8 — Confirmare cadre capturate ───────────────────────────────────
 function showConfirmation() {
+  paused = true;
   document.getElementById('face-thumb-1').src = frames[0];
   document.getElementById('face-thumb-2').src = frames[1];
   document.getElementById('face-thumb-3').src = frames[2];
   document.getElementById('face-confirm-section').style.display = '';
   canvasElement.parentElement.style.display = 'none';
-  statusMsg.textContent = 'Verifica imaginile capturate.';
+  statusMsg.textContent = 'Verifică imaginile capturate.';
   statusMsg.style.color = '';
 }
 
@@ -218,9 +221,10 @@ function resetCapture() {
   frames       = [];
   alignedSince = null;
   capturing    = false;
+  paused       = false;
   document.getElementById('face-confirm-section').style.display = 'none';
   canvasElement.parentElement.style.display = '';
-  statusMsg.textContent = 'Pozitioneaza fata in chenar';
+  statusMsg.textContent = 'Poziționează fața în chenar';
   statusMsg.style.color = '';
 }
 
