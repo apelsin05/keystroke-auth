@@ -1124,7 +1124,7 @@ def dashboard():
             'last_seen':    str(row['last_seen']  or '')[:16].replace('T', ' '),
             'login_count':  login_count,
             'enrolled':     enrolled,
-            'progress_pct': min(int(login_count / 20 * 100), 100),
+            'progress_pct': min(int(login_count / 12 * 100), 100),
         })
     
     needs_face_enroll = (
@@ -1133,7 +1133,7 @@ def dashboard():
     )
 
     return render_template('dashboard.html', user=user, logins=logins, devices=devices,
-                           enrollment_target=20, needs_face_enroll=needs_face_enroll)
+                           enrollment_target=12, needs_face_enroll=needs_face_enroll)
 
 
 @app.route('/settings/toggle-keystroke', methods=['POST'])
