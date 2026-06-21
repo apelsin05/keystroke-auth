@@ -19,5 +19,4 @@ __pycache__/
 # CSV data files (contain user data)
 data/*.csv
 
-Draft Licenta.docx
-Plan licenta v1.docx
+documente/
