@@ -1,20 +1,21 @@
 import os
 import json
 import uuid
-import csv
 import random
 import string
 from datetime import datetime, timedelta
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from utils.agent_face import enroll as face_enroll, analyze as face_analyze, revoke_enrollment
+
 import bcrypt
-import pandas as pd
 from flask import (
-    Flask, render_template, request, redirect,
+    Flask, jsonify, render_template, request, redirect,
     url_for, session, flash, make_response
 )
 from flask_session import Session
 
+from utils.database import init_db, insert, fetchone, fetchall, update, delete_where, execute_query
 from utils.password_validator import validate_password
 from utils.email_sender import (
     send_2fa_email, send_unlawful_login_email,
@@ -25,219 +26,54 @@ from utils.device_fingerprint import (
     find_device, repair_device_connection, create_device,
     increment_device_login_count
 )
-from utils.agent_keystroke import compare_profiles, save_keystroke_sample
-from utils.agent_ip import get_ip_info, score_ip, record_ip
+from utils.agent_keystroke import compare_profiles, save_keystroke_sample, analyze as ks_analyze
+from utils.agent_ip import get_ip_info, score_ip, record_ip, analyze as ip_analyze
 from utils.orchestrator import decide
+from utils.agent_face import enroll as face_enroll, analyze as face_analyze
 
-# ── App setup
+# ── App setup ──────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-production')
 
-# Server-side session config (stores session data on disk, not in cookie)
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_FILE_DIR'] = os.path.join(os.path.dirname(__file__), 'data', 'sessions')
+app.config['SESSION_TYPE']             = 'filesystem'
+app.config['SESSION_FILE_DIR']         = os.path.join(os.path.dirname(__file__), 'data', 'sessions')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=2)
 Session(app)
 
-# ── CSV file paths 
+# Initializeaza baza de date la pornire
+init_db()
 
-DATA_DIR        = os.path.join(os.path.dirname(__file__), 'data')
-USERS_CSV       = os.path.join(DATA_DIR, 'users.csv')
-LOGINS_CSV      = os.path.join(DATA_DIR, 'logins.csv')
-KEYSTROKES_CSV  = os.path.join(DATA_DIR, 'keystrokes.csv')
-TWO_FA_CSV      = os.path.join(DATA_DIR, '2fa_codes.csv')
-SESSIONS_CSV    = os.path.join(DATA_DIR, 'sessions.csv')
-DEVICES_CSV     = os.path.join(DATA_DIR, 'devices.csv')
-SECURITY_CSV = os.path.join(DATA_DIR, 'security_events.csv')
-KNOWN_IPS_CSV = os.path.join(DATA_DIR, 'known_ips.csv')
-AUTH_AUDIT_CSV = os.path.join(DATA_DIR, 'auth_audit.csv')
+# ── Constante ──────────────────────────────────────────────────────────────
 
-# ── CSV helpers 
+ENROLLMENT_LOGINS = 12
 
-def ensure_csv(path, headers):
-    """Create a CSV file with headers if it doesn't exist yet."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if not os.path.exists(path):
-        with open(path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-
-def init_csv_files():
-    ensure_csv(USERS_CSV,      ['user_id', 'email', 'username', 'password_hash',
-                                 'name', 'surname', 'phone', 'keystroke_enabled',
-                                 'created_at'])
-    ensure_csv(LOGINS_CSV,     ['login_id', 'user_id', 'timestamp', 'device_info',
-                                 'location', 'status'])
-    ensure_csv(KEYSTROKES_CSV, ['sample_id', 'user_id', 'device_id', 'login_id',
-                             'final_sequence_json', 'auxiliary_json',
-                             'has_backspace', 'confidence', 'is_truncated',
-                             'recorded_at'])
-    ensure_csv(TWO_FA_CSV,     ['session_id', 'code', 'expires_at'])
-    ensure_csv(SESSIONS_CSV,   ['session_id', 'user_id', 'status', 'created_at'])
-    ensure_csv(DEVICES_CSV,    ['device_id', 'user_id', 'fingerprint_hash', 'token',
-                                 'first_seen', 'last_seen', 'login_count', 'enrolled'])
-    ensure_csv(SECURITY_CSV, ['event_id', 'user_id', 'device_id', 'event_type',
-                           'timestamp', 'details', 'confirm_token',
-                           'token_expires_at', 'resolved'])
-    ensure_csv(KNOWN_IPS_CSV, ['ip_id', 'user_id', 'ip_address', 'country', 'city',
-                            'isp', 'first_seen', 'last_seen', 'times_seen', 'trusted'])
-    ensure_csv(AUTH_AUDIT_CSV, [ 'audit_id','timestamp', 'stage','user_id','email',
-                            'session_id','device_id', 'ip_address', 'entered_code_masked', 
-                            'stored_code_masked', 'entered_length', 'stored_length', 'codes_match', 
-                            'expires_at','is_expired', 'twofa_attempts', 'reason', 'device_info' ])
-
-# Run on startup
-init_csv_files()
-
-# ── ENROLLMENT threshold 
-
-ENROLLMENT_LOGINS = 12   # collect data for first 12 logins before scoring
-
-# ── Utility: generate a 6-digit 2FA code 
+# ── Helpers autentificare ──────────────────────────────────────────────────
 
 def generate_2fa_code():
     return ''.join(random.choices(string.digits, k=6))
 
-# ── Utility: save / read users from CSV ─
 
 def find_user_by_email(email):
-    try:
-        df = pd.read_csv(USERS_CSV)
-        row = df[df['email'] == email]
-        return row.iloc[0].to_dict() if not row.empty else None
-    except Exception:
-        return None
+    row = fetchone('users', {'email': email})
+    return dict(row) if row else None
+
 
 def find_user_by_identifier(identifier):
-    """Find by email OR username."""
-    try:
-        df = pd.read_csv(USERS_CSV)
-        row = df[(df['email'] == identifier) | (df['username'] == identifier)]
-        return row.iloc[0].to_dict() if not row.empty else None
-    except Exception:
-        return None
+    rows = execute_query(
+        "SELECT * FROM users WHERE email=? OR username=? LIMIT 1",
+        [identifier, identifier]
+    )
+    return dict(rows[0]) if rows else None
+
 
 def find_user_by_id(user_id):
-    try:
-        df = pd.read_csv(USERS_CSV)
-        row = df[df['user_id'] == user_id]
-        return row.iloc[0].to_dict() if not row.empty else None
-    except Exception:
-        return None
-    
+    row = fetchone('users', {'user_id': user_id})
+    return dict(row) if row else None
 
-    # pt identificarea tioului de device, in emailul de alerta
-def format_device_info(device_info_str):
-    """
-    Transforma string-ul brut de device info intr-un text lizibil pentru email.
-    Extrage: sistem de operare, browser, rezolutie, timezone.
-    """
-    try:
-        # device_info_str e rezultatul lui str(dict), il convertim inapoi
-        import ast
-        info = ast.literal_eval(device_info_str)
-    except Exception:
-        return device_info_str  # fallback: returnam ce avem
-
-    ua = info.get('userAgent', '')
-
-    # detectam OS din User-Agent
-    if 'Windows NT 10' in ua:
-        os_name = 'Windows 10/11'
-    elif 'Windows NT 6' in ua:
-        os_name = 'Windows 7/8'
-    elif 'Mac OS X' in ua:
-        os_name = 'macOS'
-    elif 'Android' in ua:
-        os_name = 'Android'
-    elif 'iPhone' in ua or 'iPad' in ua:
-        os_name = 'iOS'
-    elif 'Linux' in ua:
-        os_name = 'Linux'
-    else:
-        os_name = 'Necunoscut'
-
-    # detectam browser-ul
-    if 'Edg/' in ua:
-        browser = 'Microsoft Edge'
-    elif 'Chrome/' in ua:
-        browser = 'Google Chrome'
-    elif 'Firefox/' in ua:
-        browser = 'Mozilla Firefox'
-    elif 'Safari/' in ua and 'Chrome' not in ua:
-        browser = 'Safari'
-    else:
-        browser = 'Necunoscut'
-
-    width    = info.get('screenWidth', '?')
-    height   = info.get('screenHeight', '?')
-    timezone = info.get('timezone', 'Necunoscuta')
-
-    return (
-        f"Sistem de operare: {os_name}<br>"
-        f"Browser: {browser}<br>"
-        f"Rezolutie ecran: {width}×{height}<br>"
-        f"Fus orar: {timezone}"
-    )
-
-
-def format_device_info_text(device_info_str):
-    """
-    Versiune simpla a lui format_device_info — returneaza text curat,
-    folosita in tabelele din dashboard (nu in emailuri).
-    Ex: "Chrome · Windows 10/11"
-    """
-    try:
-        import ast
-        info = ast.literal_eval(device_info_str)
-    except Exception:
-        return "Necunoscut"
-
-    ua = info.get('userAgent', '')
-
-    if 'Windows NT 10' in ua or 'Windows NT 11' in ua:
-        os_name = 'Windows 10/11'
-    elif 'Windows NT 6' in ua:
-        os_name = 'Windows 7/8'
-    elif 'Mac OS X' in ua:
-        os_name = 'macOS'
-    elif 'Android' in ua:
-        os_name = 'Android'
-    elif 'iPhone' in ua or 'iPad' in ua:
-        os_name = 'iOS'
-    elif 'Linux' in ua:
-        os_name = 'Linux'
-    else:
-        os_name = 'Necunoscut'
-
-    if 'Edg/' in ua:
-        browser = 'Edge'
-    elif 'Chrome/' in ua:
-        browser = 'Chrome'
-    elif 'Firefox/' in ua:
-        browser = 'Firefox'
-    elif 'Safari/' in ua and 'Chrome' not in ua:
-        browser = 'Safari'
-    else:
-        browser = 'Browser necunoscut'
-
-    return f"{browser} · {os_name}"
-
-
-def append_row(path, row_dict):
-    with open(path, 'a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=row_dict.keys())
-        writer.writerow(row_dict)
 
 def mask_2fa_code(code):
-    """
-    Mascheaza codul 2FA pentru audit.
-    Exemplu:
-    012345 -> 0*****
-    987654 -> 9*****
-    """
     if code is None:
         return ''
     code = str(code)
@@ -248,27 +84,11 @@ def mask_2fa_code(code):
     return code[0] + ('*' * (len(code) - 1))
 
 
-def append_auth_audit(
-    stage,
-    user_id='',
-    email='',
-    session_id='',
-    device_id='',
-    ip_address='',
-    entered_code='',
-    stored_code='',
-    codes_match='',
-    expires_at='',
-    is_expired='',
-    twofa_attempts='',
-    reason='',
-    device_info=''
-):
-    """
-    Audit tehnic pentru fluxul de autentificare.
-    Nu salveaza codul 2FA in clar.
-    """
-    row = {
+def append_auth_audit(stage, user_id='', email='', session_id='', device_id='',
+                      ip_address='', entered_code='', stored_code='', codes_match='',
+                      expires_at='', is_expired='', twofa_attempts='', reason='',
+                      device_info=''):
+    insert('auth_audit', {
         'audit_id':            str(uuid.uuid4()),
         'timestamp':           datetime.utcnow().isoformat(),
         'stage':               stage,
@@ -279,37 +99,129 @@ def append_auth_audit(
         'ip_address':          ip_address or '',
         'entered_code_masked': mask_2fa_code(entered_code),
         'stored_code_masked':  mask_2fa_code(stored_code),
-        'entered_length':      len(str(entered_code)) if entered_code is not None else '',
-        'stored_length':       len(str(stored_code)) if stored_code is not None else '',
-        'codes_match':         codes_match,
+        'entered_length':      len(str(entered_code)) if entered_code is not None else 0,
+        'stored_length':       len(str(stored_code))  if stored_code  is not None else 0,
+        'codes_match':         1 if codes_match is True else (0 if codes_match is False else None),
         'expires_at':          expires_at or '',
-        'is_expired':          is_expired,
-        'twofa_attempts':      twofa_attempts,
+        'is_expired':          1 if is_expired is True else (0 if is_expired is False else None),
+        'twofa_attempts':      twofa_attempts if twofa_attempts != '' else 0,
         'reason':              reason or '',
         'device_info':         device_info or '',
-    }
-    append_row(AUTH_AUDIT_CSV, row)
+    })
 
-# ── Routes
+
+def log_ml_event(user_id, device_id, login_id, ks_result,
+                 ip_score, final_score, decision, login_status, sample_added=False):
+    feat = ks_result.get('features') or {}
+    prof = ks_result.get('profile') or {}
+
+    def prof_mean(k):
+        v = prof.get(k)
+        return round(v['mean'], 2) if v else None
+
+    insert('ml_log', {
+        'log_id':           str(uuid.uuid4()),
+        'timestamp':        datetime.utcnow().isoformat(),
+        'event_type':       ks_result.get('status', 'scored'),
+        'user_id':          user_id,
+        'device_id':        device_id,
+        'login_id':         login_id,
+        'n_samples':        ks_result.get('n_enrollment'),
+        'mean_dwell_ms':    round(feat.get('mean_dwell',  0), 2),
+        'std_dwell_ms':     round(feat.get('std_dwell',   0), 2),
+        'mean_flight_ms':   round(feat.get('mean_flight', 0), 2),
+        'std_flight_ms':    round(feat.get('std_flight',  0), 2),
+        'score_raw':        round(ks_result['score_raw'],  3) if ks_result.get('score_raw')  is not None else None,
+        'threshold':        round(ks_result['threshold'],  3) if ks_result.get('threshold')  is not None else None,
+        'keystroke_score':  round(ks_result['keystroke_score'], 3),
+        'ip_score':         round(ip_score,    3),
+        'final_score':      round(final_score, 3),
+        'decision':         decision,
+        'login_status':     login_status,
+        'sample_added':     int(sample_added),
+        'confirmed':        None,
+        'train_mean_dwell': prof_mean('mean_dwell'),
+        'train_std_dwell':  prof_mean('std_dwell'),
+        'train_mean_flight':prof_mean('mean_flight'),
+        'train_std_flight': prof_mean('std_flight'),
+        'notes':            'manhattan_scaled'
+    })
+
+
+def format_device_info(device_info_str):
+    try:
+        import ast
+        info = ast.literal_eval(device_info_str)
+    except Exception:
+        return device_info_str
+
+    ua = info.get('userAgent', '')
+    if 'Windows NT 10' in ua:   os_name = 'Windows 10/11'
+    elif 'Windows NT 6' in ua:  os_name = 'Windows 7/8'
+    elif 'Mac OS X' in ua:      os_name = 'macOS'
+    elif 'Android' in ua:       os_name = 'Android'
+    elif 'iPhone' in ua or 'iPad' in ua: os_name = 'iOS'
+    elif 'Linux' in ua:         os_name = 'Linux'
+    else:                       os_name = 'Necunoscut'
+
+    if 'Edg/' in ua:            browser = 'Microsoft Edge'
+    elif 'Chrome/' in ua:       browser = 'Google Chrome'
+    elif 'Firefox/' in ua:      browser = 'Mozilla Firefox'
+    elif 'Safari/' in ua and 'Chrome' not in ua: browser = 'Safari'
+    else:                       browser = 'Necunoscut'
+
+    width    = info.get('screenWidth',  '?')
+    height   = info.get('screenHeight', '?')
+    timezone = info.get('timezone', 'Necunoscuta')
+
+    return (f"Sistem de operare: {os_name}<br>"
+            f"Browser: {browser}<br>"
+            f"Rezolutie ecran: {width}×{height}<br>"
+            f"Fus orar: {timezone}")
+
+
+def format_device_info_text(device_info_str):
+    try:
+        import ast
+        info = ast.literal_eval(device_info_str)
+    except Exception:
+        return "Necunoscut"
+
+    ua = info.get('userAgent', '')
+    if 'Windows NT 10' in ua or 'Windows NT 11' in ua: os_name = 'Windows 10/11'
+    elif 'Windows NT 6' in ua: os_name = 'Windows 7/8'
+    elif 'Mac OS X' in ua:     os_name = 'macOS'
+    elif 'Android' in ua:      os_name = 'Android'
+    elif 'iPhone' in ua or 'iPad' in ua: os_name = 'iOS'
+    elif 'Linux' in ua:        os_name = 'Linux'
+    else:                      os_name = 'Necunoscut'
+
+    if 'Edg/' in ua:           browser = 'Edge'
+    elif 'Chrome/' in ua:      browser = 'Chrome'
+    elif 'Firefox/' in ua:     browser = 'Firefox'
+    elif 'Safari/' in ua and 'Chrome' not in ua: browser = 'Safari'
+    else:                      browser = 'Browser necunoscut'
+
+    return f"{browser} · {os_name}"
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def home():
     return redirect(url_for("login"))
 
-# ── REGISTER step 1 
 
 @app.route('/register/step1', methods=['GET', 'POST'])
 def register_step1():
     if request.method == 'GET':
         return render_template('register.html')
 
-    # POST: receive email, password, keystroke data
     email    = request.form.get('email', '').strip().lower()
     password = request.form.get('password', '')
     confirm  = request.form.get('confirm-password', '')
     ks_raw   = request.form.get('keystrokes_data', '[]')
 
-    # --- server-side validation (never trust client) ---
     errors = validate_password(password)
     if errors:
         flash('Parola nu respecta toate conditiile.', 'error')
@@ -323,10 +235,8 @@ def register_step1():
         flash('Exista deja un cont cu acest email.', 'error')
         return render_template('register.html')
 
-    # --- hash password ---
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-    # --- store in session until step 2 completes ---
     session['reg_email']         = email
     session['reg_password_hash'] = password_hash
     session['reg_keystrokes']    = ks_raw
@@ -334,33 +244,28 @@ def register_step1():
     return redirect(url_for('register_step2'))
 
 
-# ── REGISTER step 2 
-
 @app.route('/register/step2', methods=['GET', 'POST'])
 def register_step2():
-    # Guard: if step 1 was never completed, send back
     if 'reg_email' not in session:
         return redirect(url_for('register_step1'))
 
     if request.method == 'GET':
         return render_template('register_step2.html')
 
-    # POST: receive username + optional fields + checkbox
-    username           = request.form.get('username', '').strip()
-    name               = request.form.get('name', '').strip()
-    surname            = request.form.get('surname', '').strip()
-    phone              = request.form.get('phone', '').strip()
-    keystroke_enabled  = 1 if request.form.get('security') else 0
+    username          = request.form.get('username', '').strip()
+    name              = request.form.get('name', '').strip()
+    surname           = request.form.get('surname', '').strip()
+    phone             = request.form.get('phone', '').strip()
+    keystroke_enabled = 1 if request.form.get('security') else 0
 
     if not username:
         flash('Username-ul este obligatoriu.', 'error')
         return render_template('register_step2.html')
 
-    # Build user record
     user_id = str(uuid.uuid4())
     now     = datetime.utcnow().isoformat()
 
-    append_row(USERS_CSV, {
+    insert('users', {
         'user_id':           user_id,
         'email':             session['reg_email'],
         'username':          username,
@@ -372,47 +277,297 @@ def register_step2():
         'created_at':        now,
     })
 
-    # # Save registration keystroke sample if security is enabled
-    # if keystroke_enabled:
-    #     sample_id = str(uuid.uuid4())
-    #     append_row(KEYSTROKES_CSV, {
-    #         'sample_id':     sample_id,
-    #         'user_id':       user_id,
-    #         'login_id':      'registration',
-    #         'keystroke_json': session.get('reg_keystrokes', '[]'),
-    #         'recorded_at':   now,
-    #     })
-
-    # Clear registration data from session
     session.pop('reg_email', None)
     session.pop('reg_password_hash', None)
     session.pop('reg_keystrokes', None)
 
     flash('Cont creat cu succes! Te poti autentifica.', 'success')
     return redirect(url_for('login'))
+    
+    
+@app.route('/register/face', methods=['POST'])
+def register_face():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Neautentificat'}), 401
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'status': 'error', 'message': 'Request invalid'}), 400
+
+    frames = data.get('frames', [])
+    if len(frames) != 3:
+        return jsonify({'status': 'error', 'message': 'Sunt necesare exact 3 cadre'}), 400
+
+    result = face_enroll(user_id, frames)
+
+    if result['status'] == 'enrolled':
+        return jsonify(result), 200
+    else:
+        return jsonify(result), 400
 
 
-# ── LOGIN 
+@app.route('/register/face', methods=['DELETE'])
+def revoke_face_api():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'status': 'error', 'message': 'Neautentificat'}), 401
+    revoke_enrollment(user_id)   # funcția există deja, importată ca revoke_enrollment
+    return jsonify({'status': 'revoked'}), 200
+
+@app.route('/face/enroll', methods=['GET'])
+def face_enroll_page():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    user = find_user_by_id(session['user_id'])
+    if not user:
+        return redirect(url_for('login'))
+    return render_template('face_enroll.html', user=user)
+
+@app.route('/settings/revoke-face', methods=['POST'])
+def revoke_face():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    revoke_enrollment(session['user_id'])
+    flash('Profilul facial a fost revocat.', 'info')
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/dev/face', methods=['GET'])
+def dev_face():
+    if not app.debug:
+        return 'Not available in production', 403
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Dev — Face Test</title></head>
+    <body>
+      <h2>Test agent facial</h2>
+      <video id="video" width="400" autoplay style="transform: scaleX(-1)"></video>
+      <button onclick="capture()">Capturează și testează</button>
+      <canvas id="canvas" width="400" height="300" style="display:none"></canvas>
+      <pre id="result" style="margin-top:20px; background:#f0f0f0; padding:10px"></pre>
+
+      <script>
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => { document.getElementById('video').srcObject = stream; })
+          .catch(err => { document.getElementById('result').textContent = 'Camera indisponibila: ' + err; });
+
+        function capture() {
+          const video  = document.getElementById('video');
+          const canvas = document.getElementById('canvas');
+          const ctx = canvas.getContext('2d');
+          ctx.translate(400, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, 0, 0, 400, 300);
+          const frame  = canvas.toDataURL('image/jpeg');
+
+          fetch('/dev/face/analyze', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ frame: frame })
+          })
+          .then(r => r.json())
+          .then(data => {
+            document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+          });
+        }
+      </script>
+    </body>
+    </html>
+    """
+    return html
+
+
+@app.route('/dev/face/analyze', methods=['POST'])
+def dev_face_analyze():
+    if not app.debug:
+        return jsonify({'error': 'Not available in production'}), 403
+
+    data = request.get_json()
+    if not data or 'frame' not in data:
+        return jsonify({'status': 'error', 'message': 'Cadru lipsă'}), 400
+
+    user_id = session.get('user_id', 'a1b2e510-ab70-4421-b692-4de11dd1a1ef')
+
+    result = face_analyze(user_id, data['frame'], login_id='dev-test')
+    return jsonify(result), 200
+
+def _finalize_auth(user, user_id, device_id, login_id,
+                   ks_result, ks_decision, ks_raw,
+                   ip_score, ip_decision, ip_info, ip_address,
+                   face_decision, decision,
+                   device_login_count, had_failed_password,
+                   device_info_dict, now,
+                   new_device_token=None):
+    """
+    Finalizeaza autentificarea dupa ce toate semnalele au fost colectate
+    si orchestratorul a dat decizia finala (allow / 2fa / 2fa_reenrollment).
+
+    Preia 'decision' ca parametru — orchestratorul a fost deja apelat.
+    """
+    print(f"[FINALIZE] ks={ks_decision} ip={ip_decision} face={face_decision} "
+          f"decision={decision}")
+
+    # ── Cale directa: allow fara 2FA ─────────────────────────────────────────
+    if decision == 'allow':
+        record_ip(user_id, ip_address, ip_info)
+        sample_added = False
+
+        if int(user['keystroke_enabled']) == 1:
+            label = 'enrollment_genuine' if device_login_count < ENROLLMENT_LOGINS else 'test_genuine'
+            save_keystroke_sample(user_id, device_id, login_id, ks_raw, attempt_label=label)
+            sample_added = True
+
+        final_score = ks_result['keystroke_score'] * 0.7 + ip_score * 0.3
+
+        historical_suspicious = False
+        failed_count_rows = execute_query(
+            "SELECT COUNT(*) as cnt FROM security_events WHERE user_id=? AND event_type='failed_2fa'",
+            [user_id]
+        )
+        if failed_count_rows and failed_count_rows[0]['cnt'] >= 3:
+            historical_suspicious = True
+
+        login_status = (
+            'active_flagged_suspicious'
+            if (had_failed_password or historical_suspicious)
+            else 'active'
+        )
+
+        if ks_result['keystroke_score'] < 0.3:
+            login_status = 'unlawful'
+            send_unlawful_login_email(user['email'], format_device_info(str(device_info_dict)), now)
+
+        log_ml_event(user_id, device_id, login_id, ks_result,
+                     ip_score, final_score, decision, login_status, sample_added)
+
+        insert('login_attempts', {
+            'login_id':        login_id,
+            'user_id':         user_id,
+            'device_id':       device_id,
+            'timestamp':       now,
+            'device_info':     str(device_info_dict),
+            'location':        f"{ip_info.get('city')}, {ip_info.get('country')}",
+            'ip_address':      ip_address,
+            'keystroke_score': ks_result['keystroke_score'],
+            'ip_score':        ip_score,
+            'final_score':     final_score,
+            'classification':  ks_result.get('status'),
+            'decision':        decision,
+            'twofa_passed':    0,
+            'status':          login_status,
+        })
+        insert('sessions', {
+            'session_id': login_id,
+            'user_id':    user_id,
+            'status':     login_status,
+            'created_at': now,
+        })
+
+        if login_status == 'active_flagged_suspicious':
+            confirm_token = str(uuid.uuid4())
+            token_expires = (datetime.utcnow() + timedelta(hours=24)).isoformat()
+            confirm_url   = url_for('confirm_identity', token=confirm_token, _external=True)
+            insert('security_events', {
+                'event_id':         str(uuid.uuid4()),
+                'user_id':          user_id,
+                'device_id':        device_id,
+                'event_type':       'suspicious_login',
+                'timestamp':        now,
+                'details':          'flagged la login direct (fara 2FA)',
+                'confirm_token':    confirm_token,
+                'token_expires_at': token_expires,
+                'resolved':         0,
+            })
+            send_confirm_identity_email(user['email'], confirm_url, now,
+                                        format_device_info(str(device_info_dict)))
+
+        increment_device_login_count(device_id)
+        session['user_id']  = user_id
+        session['username'] = user['username']
+        session.permanent   = True
+
+        response = make_response(redirect(url_for('dashboard')))
+        if new_device_token:
+            response.set_cookie('device_token', new_device_token,
+                                max_age=60*60*24*365, httponly=False, samesite='Lax')
+        return response
+
+    # ── Cale 2FA ─────────────────────────────────────────────────────────────
+    code       = generate_2fa_code()
+    session_id = str(uuid.uuid4())
+    expires_at = (datetime.utcnow() + timedelta(minutes=4)).isoformat()
+
+    insert('twofa_codes', {
+        'session_id': session_id,
+        'code':       code,
+        'expires_at': expires_at,
+    })
+    send_2fa_email(user['email'], code)
+
+    append_auth_audit(
+        stage='2fa_code_generated',
+        user_id=user_id,
+        email=user['email'],
+        session_id=session_id,
+        device_id=device_id,
+        ip_address=ip_address,
+        stored_code=code,
+        expires_at=expires_at,
+        is_expired=False,
+        twofa_attempts=0,
+        reason=f'orchestrator_decision={decision}',
+        device_info=str(device_info_dict)
+    )
+
+    session['pending_user_id']            = user_id
+    session['pending_session_id']         = session_id
+    session['pending_keystrokes']         = ks_raw
+    session['pending_device_id']          = device_id
+    session['pending_device_info']        = str(device_info_dict)
+    session['twofa_attempts']             = 0
+    session['had_failed_password']        = had_failed_password
+    session['impostor_sample_saved']      = False
+    session['pending_ks_score']           = float(ks_result['keystroke_score'])
+    session['pending_ks_score_raw']       = float(ks_result['score_raw']) if ks_result['score_raw'] is not None else None
+    session['pending_ks_threshold']       = float(ks_result['threshold']) if ks_result['threshold'] is not None else None
+    session['pending_ks_status']          = str(ks_result.get('status', 'enrollment'))
+    session['pending_ks_decision']        = str(ks_decision)
+    session['pending_ip_score']           = float(ip_score)
+    session['pending_ip_city']            = str(ip_info.get('city') or '')
+    session['pending_ip_country']         = str(ip_info.get('country') or '')
+    session['pending_ip_address']         = ip_address
+    session['pending_orchestrator_dec']   = decision
+    session['pending_login_id']           = login_id
+    session['pending_login_timestamp']    = now
+    session['pending_device_login_count'] = int(device_login_count)
+     
+    if new_device_token:
+        session['new_device_token'] = new_device_token
+    return redirect(url_for('two_fa'))
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
         return render_template('login.html')
+
     identifier = request.form.get('identifier', '').strip()
     password   = request.form.get('password', '')
     ks_raw     = request.form.get('keystrokes_data', '[]')
-    user = find_user_by_identifier(identifier)
+    user       = find_user_by_identifier(identifier)
+
     if not user or not bcrypt.checkpw(
         password.encode('utf-8'),
         user['password_hash'].encode('utf-8')
     ):
-        # incrementam counter-ul de parole gresite in session
         session['failed_password_attempts'] = session.get('failed_password_attempts', 0) + 1
         pw_attempts = session['failed_password_attempts']
 
-        # daca userul exista dar parola e gresita, logam in security_events
         if user:
-            append_row(SECURITY_CSV, {
+            insert('security_events', {
                 'event_id':         str(uuid.uuid4()),
                 'user_id':          user['user_id'],
                 'device_id':        '',
@@ -423,7 +578,6 @@ def login():
                 'token_expires_at': '',
                 'resolved':         0,
             })
-            # la 3 parole gresite consecutive, trimitem email de alerta
             if pw_attempts >= 3:
                 send_security_alert_email(
                     user['email'], pw_attempts,
@@ -433,7 +587,6 @@ def login():
         flash('Email/username sau parola incorecta.', 'error')
         return render_template('login.html')
 
-    # parola e corecta — retinem daca au existat incercari esuate anterior
     had_failed_password = session.get('failed_password_attempts', 0) >= 1
     session.pop('failed_password_attempts', None)
 
@@ -441,54 +594,176 @@ def login():
     fingerprint      = generate_fingerprint_hash(device_info_dict)
     incoming_token   = request.form.get('device_token', '').strip()
 
-    status, device = find_device(user['user_id'], fingerprint, incoming_token, DEVICES_CSV)
+    # find_device nu mai primeste calea CSV
+    status, device = find_device(user['user_id'], fingerprint, incoming_token)
+    print(f"[DEVICE DEBUG] status={status} token_received='{incoming_token[:8] if incoming_token else 'EMPTY'}...' fingerprint={fingerprint[:8]}...")
 
     if status == 'new_device':
         new_token = generate_device_token()
-        device    = create_device(user['user_id'], fingerprint, new_token, DEVICES_CSV)
+        device    = create_device(user['user_id'], fingerprint, new_token)
         session['new_device_token'] = new_token
     elif status in ('browser_updated', 'token_cleared'):
         new_token = generate_device_token() if status == 'token_cleared' else None
-        repair_device_connection(device, status, fingerprint, new_token, DEVICES_CSV)
+        repair_device_connection(device, status, fingerprint, new_token)
         if status == 'token_cleared':
             session['new_device_token'] = new_token
 
-    code       = generate_2fa_code()
-    session_id = str(uuid.uuid4())
-    expires_at = (datetime.utcnow() + timedelta(minutes=4)).isoformat()
-    append_row(TWO_FA_CSV, {
-        'session_id': session_id,
-        'code':       code,
-        'expires_at': expires_at,
-    })
-    send_2fa_email(user['email'], code)
+    # ── Scoring + decizie orchestrator (inainte de 2FA) ─────────────────────
+    login_id  = str(uuid.uuid4())
+    now       = datetime.utcnow().isoformat()
+    user_id   = user['user_id']
+    device_id = device['device_id']
 
-    append_auth_audit(
-        stage='2fa_code_generated',
-        user_id=user['user_id'],
-        email=user['email'],
-        session_id=session_id,
-        device_id=device['device_id'],
-        ip_address=request.remote_addr,
-        stored_code=code,
-        expires_at=expires_at,
-        is_expired=False,
-        twofa_attempts=0,
-        reason='code_created_and_emailed',
-        device_info=str(device_info_dict)
+    device_login_count_rows = execute_query(
+        "SELECT login_count FROM devices WHERE device_id=? LIMIT 1", [device_id]
+    )
+    device_login_count = int(device_login_count_rows[0]['login_count']) if device_login_count_rows else 0
+    print(f"[KS DEBUG] keystroke_enabled={user['keystroke_enabled']} device_login_count={device_login_count} threshold={ENROLLMENT_LOGINS}")
+
+    ks_result = {'keystroke_score': 1.0, 'score_raw': None,
+                 'threshold': None, 'n_enrollment': 0,
+                 'features': None, 'profile': None,
+                 'status': 'enrollment', 'decision': 'insufficient_data'}
+
+    if int(user['keystroke_enabled']) == 1 and device_login_count >= ENROLLMENT_LOGINS:
+        ks_result = ks_analyze(user_id, device_id, ks_raw)
+
+    ks_decision   = ks_result.get('decision', 'insufficient_data')
+    ip_address    = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+    ip_info       = get_ip_info(ip_address)
+    ip_result     = ip_analyze(user_id, ip_address)
+    ip_score      = ip_result['ip_score']
+    ip_decision   = ip_result['decision']
+    # Determina disponibilitatea agentului facial
+    face_decision = 'pending' if int(user.get('face_enabled', 0)) == 1 else 'opted_out'
+
+    orch_result = decide(ks_decision, ip_decision, face_decision)
+    decision    = orch_result['decision']
+
+    print(f"[DEBUG] keystroke={ks_result['keystroke_score']:.3f} "
+          f"raw={ks_result.get('score_raw')} ip={ip_score:.3f} "
+          f"face={face_decision} -> {decision} ({orch_result['reason']})")
+
+    if decision == 'consult_face':
+        new_device_token = session.pop('new_device_token', None)
+        session['pending_face'] = {
+            'user_id':             user_id,
+            'username':            user['username'],
+            'email':               user['email'],
+            'keystroke_enabled':   int(user['keystroke_enabled']),
+            'device_id':           device_id,
+            'login_id':            login_id,
+            'ks_score':            float(ks_result['keystroke_score']),
+            'ks_score_raw':        float(ks_result['score_raw']) if ks_result['score_raw'] is not None else None,
+            'ks_threshold':        float(ks_result['threshold']) if ks_result['threshold'] is not None else None,
+            'ks_status':           str(ks_result.get('status', 'enrollment')),
+            'ks_decision':         str(ks_decision),
+            'ks_raw':              ks_raw,
+            'ip_score':            float(ip_score),
+            'ip_decision':         str(ip_decision),
+            'ip_city':             str(ip_info.get('city') or ''),
+            'ip_country':          str(ip_info.get('country') or ''),
+            'ip_address':          ip_address,
+            'device_login_count':  int(device_login_count),
+            'had_failed_password': had_failed_password,
+            'device_info':         str(device_info_dict),
+            'now':                 now,
+            'new_device_token':    new_device_token,
+        }
+        return redirect(url_for('login_face'))
+
+    new_device_token = session.pop('new_device_token', None)
+    return _finalize_auth(
+        user=user, user_id=user_id, device_id=device_id, login_id=login_id,
+        ks_result=ks_result, ks_decision=ks_decision, ks_raw=ks_raw,
+        ip_score=ip_score, ip_decision=ip_decision,
+        ip_info=ip_info, ip_address=ip_address,
+        face_decision=face_decision, decision=decision,
+        device_login_count=device_login_count,
+        had_failed_password=had_failed_password,
+        device_info_dict=device_info_dict, now=now,
+        new_device_token=new_device_token,
     )
 
-    session['pending_user_id']         = user['user_id']
-    session['pending_session_id']       = session_id
-    session['pending_keystrokes']       = ks_raw
-    session['pending_device_id']        = device['device_id']
-    session['pending_device_info']      = str(device_info_dict)
-    session['twofa_attempts']           = 0
-    session['had_failed_password']      = had_failed_password
-    return redirect(url_for('two_fa'))
+@app.route('/login/face', methods=['GET', 'POST'])
+def login_face():
+    if request.method == 'GET':
+        if 'pending_face' not in session:
+            return redirect(url_for('login'))
+        return render_template('login_face.html')
+
+    # POST — primeste frame_b64 de la browser, ruleaza agentul facial,
+    # apeleaza orchestratorul cu decizia reala si finalizeaza autentificarea
+    if 'pending_face' not in session:
+        return redirect(url_for('login'))
+
+    state     = session.pop('pending_face')
+    data      = request.get_json(force=True) or {}
+    frame_b64 = data.get('frame_b64', '')
+
+    user_id  = state['user_id']
+    login_id = state['login_id']
+
+    # Agentul facial ia decizia
+    face_result   = face_analyze(user_id, frame_b64, login_id=login_id)
+    face_decision = face_result.get('decision', 'uncertain')
+    print(f"[LOGIN/FACE] user={user_id} face={face_decision} "
+          f"dist={face_result.get('distance')}")
+
+    # Orchestratorul primeste acum decizia faciala reala
+    ks_decision = state['ks_decision']
+    ip_decision = state['ip_decision']
+    orch_result = decide(ks_decision, ip_decision, face_decision)
+    decision    = orch_result['decision']
+
+    # Reconstituie structurile necesare pentru _finalize_auth
+    ks_result = {
+        'keystroke_score': state['ks_score'],
+        'score_raw':       state['ks_score_raw'],
+        'threshold':       state['ks_threshold'],
+        'status':          state['ks_status'],
+        'decision':        state['ks_decision'],
+    }
+    user_proxy = {
+        'keystroke_enabled': state['keystroke_enabled'],
+        'email':             state['email'],
+        'username':          state['username'],
+    }
+    ip_info = {'city': state['ip_city'], 'country': state['ip_country']}
+
+    finalize_resp = _finalize_auth(
+        user=user_proxy,
+        user_id=user_id,
+        device_id=state['device_id'],
+        login_id=login_id,
+        ks_result=ks_result,
+        ks_decision=ks_decision,
+        ks_raw=state['ks_raw'],
+        ip_score=state['ip_score'],
+        ip_decision=ip_decision,
+        ip_info=ip_info,
+        ip_address=state['ip_address'],
+        face_decision=face_decision,
+        decision=decision,
+        device_login_count=state['device_login_count'],
+        had_failed_password=state['had_failed_password'],
+        device_info_dict=state['device_info'],
+        now=state['now'],
+        new_device_token=state['new_device_token'],
+    )
+
+    redirect_to = finalize_resp.headers.get('Location', url_for('login'))
+    json_resp   = jsonify({
+        'decision':    face_decision,
+        'distance':    face_result.get('distance'),
+        'redirect_to': redirect_to,
+    })
+    for header, value in finalize_resp.headers:
+        if header.lower() == 'set-cookie':
+            json_resp.headers.add('Set-Cookie', value)
+    return json_resp
 
 
-# ── 2FA 
 
 @app.route('/2fa', methods=['GET', 'POST'])
 def two_fa():
@@ -509,119 +784,85 @@ def two_fa():
 
     append_auth_audit(
         stage='2fa_submit_received',
-        user_id=user_id,
-        email=email_temp,
-        session_id=session_id,
-        device_id=device_id,
-        ip_address=ip_address,
+        user_id=user_id, email=email_temp, session_id=session_id,
+        device_id=device_id, ip_address=ip_address,
         entered_code=entered_code,
         twofa_attempts=session.get('twofa_attempts', 0),
-        reason='user_submitted_code',
-        device_info=device_info
+        reason='user_submitted_code', device_info=device_info
     )
 
-    # --- look up the code in the temporary table ---
-    try:
-        df = pd.read_csv(
-            TWO_FA_CSV,
-            dtype={
-                'session_id': str,
-                'code': str,
-                'expires_at': str
-            }
-        )
-        row = df[df['session_id'] == str(session_id)]
-    except Exception:
-        append_auth_audit(
-            stage='2fa_lookup_error',
-            user_id=user_id,
-            email=email_temp,
-            session_id=session_id,
-            device_id=device_id,
-            ip_address=ip_address,
-            entered_code=entered_code,
-            reason='csv_read_failed',
-            device_info=device_info
-        )
-        flash('Eroare la verificarea codului.', 'error')
-        return render_template('2fa.html')
+    # Cauta codul in DB
+    row = fetchone('twofa_codes', {'session_id': str(session_id)})
 
-    if row.empty:
-        append_auth_audit(
-            stage='2fa_session_not_found',
-            user_id=user_id,
-            email=email_temp,
-            session_id=session_id,
-            device_id=device_id,
-            ip_address=ip_address,
-            entered_code=entered_code,
-            reason='session_id_not_found_in_2fa_codes',
-            device_info=device_info
-        )
+    if not row:
+        append_auth_audit(stage='2fa_session_not_found', user_id=user_id,
+                          email=email_temp, session_id=session_id,
+                          device_id=device_id, ip_address=ip_address,
+                          entered_code=entered_code,
+                          reason='session_id_not_found', device_info=device_info)
         flash('Codul nu a fost gasit. Incearca din nou.', 'error')
         return redirect(url_for('login'))
 
-    record      = row.iloc[0]
-    stored_code = str(record['code']).zfill(6)
-    expires_at  = datetime.fromisoformat(str(record['expires_at']))
+    stored_code = str(row['code']).zfill(6)
+    expires_at  = datetime.fromisoformat(str(row['expires_at']))
 
-    # --- check expiry ---
+    # Verificare expirare
     if datetime.utcnow() > expires_at:
-        append_auth_audit(
-            stage='2fa_expired',
-            user_id=user_id,
-            email=email_temp,
-            session_id=session_id,
-            device_id=device_id,
-            ip_address=ip_address,
-            entered_code=entered_code,
-            stored_code=stored_code,
-            codes_match=(entered_code == stored_code),
-            expires_at=expires_at.isoformat(),
-            is_expired=True,
-            twofa_attempts=session.get('twofa_attempts', 0),
-            reason='code_expired_before_validation',
-            device_info=device_info
-        )
+        append_auth_audit(stage='2fa_expired', user_id=user_id, email=email_temp,
+                          session_id=session_id, device_id=device_id,
+                          ip_address=ip_address, entered_code=entered_code,
+                          stored_code=stored_code,
+                          codes_match=(entered_code == stored_code),
+                          expires_at=expires_at.isoformat(), is_expired=True,
+                          twofa_attempts=session.get('twofa_attempts', 0),
+                          reason='code_expired', device_info=device_info)
 
-        df = df[df['session_id'] != str(session_id)]
-        df.to_csv(TWO_FA_CSV, index=False)
+        if not session.get('impostor_sample_saved'):
+            impostor_ks  = session.get('pending_keystrokes', '[]')
+            impostor_uid = session.get('pending_user_id', '')
+            impostor_did = session.get('pending_device_id', '')
+            if impostor_uid and impostor_did and impostor_ks != '[]':
+                save_keystroke_sample(impostor_uid, impostor_did,
+                                      'expired_2fa', impostor_ks,
+                                      attempt_label='test_impostor')
+                session['impostor_sample_saved'] = True
 
+        delete_where('twofa_codes', {'session_id': str(session_id)})
+        for k in ['pending_user_id', 'pending_session_id', 'pending_keystrokes',
+                  'pending_device_id', 'pending_device_info', 'twofa_attempts',
+                  'had_failed_password', 'impostor_sample_saved']:
+            session.pop(k, None)
         flash('Codul a expirat. Te rugam sa te autentifici din nou.', 'error')
         return redirect(url_for('login'))
 
-
-    # --- check code ---
+    # Verificare cod gresit
     if entered_code != stored_code:
         session['twofa_attempts'] = session.get('twofa_attempts', 0) + 1
         attempts = session['twofa_attempts']
-
+        
         reason = 'code_mismatch'
         if len(entered_code) != 6:
             reason = 'entered_code_wrong_length'
-        elif str(record['code']) != stored_code:
-            reason = 'stored_code_normalized_with_zfill'
-        elif entered_code.startswith('0') and not str(record['code']).startswith('0'):
-            reason = 'leading_zero_mismatch'
 
-        append_auth_audit(
-            stage='2fa_compare_failed',
-            user_id=user_id,
-            email=email_temp,
-            session_id=session_id,
-            device_id=device_id,
-            ip_address=ip_address,
-            entered_code=entered_code,
-            stored_code=stored_code,
-            codes_match=False,
-            expires_at=expires_at.isoformat(),
-            is_expired=False,
-            twofa_attempts=attempts,
-            reason=reason,
-            device_info=device_info
-        )
+        append_auth_audit(stage='2fa_compare_failed', user_id=user_id,
+                          email=email_temp, session_id=session_id,
+                          device_id=device_id, ip_address=ip_address,
+                          entered_code=entered_code, stored_code=stored_code,
+                          codes_match=False, expires_at=expires_at.isoformat(),
+                          is_expired=False, twofa_attempts=attempts,
+                          reason=reason, device_info=device_info)
 
-        append_row(SECURITY_CSV, {
+        if attempts == 1 and not session.get('impostor_sample_saved'):
+            impostor_ks  = session.get('pending_keystrokes', '[]')
+            impostor_uid = session.get('pending_user_id', '')
+            impostor_did = session.get('pending_device_id', '')
+            if impostor_uid and impostor_did and impostor_ks != '[]':
+                save_keystroke_sample(impostor_uid, impostor_did,
+                                      'failed_2fa', impostor_ks,
+                                      attempt_label='test_impostor')
+                session['impostor_sample_saved'] = True
+
+        insert('security_events', {
             'event_id':         str(uuid.uuid4()),
             'user_id':          user_id,
             'device_id':        device_id,
@@ -634,40 +875,32 @@ def two_fa():
         })
 
         if attempts == 2 and user_temp:
-            send_security_alert_email(
-                user_temp['email'],
-                attempts,
-                datetime.utcnow().isoformat()
-            )
+            send_security_alert_email(user_temp['email'], attempts,
+                                      datetime.utcnow().isoformat())
 
         if attempts >= 3:
-            append_auth_audit(
-                stage='2fa_locked_out',
-                user_id=user_id,
-                email=email_temp,
-                session_id=session_id,
-                device_id=device_id,
-                ip_address=ip_address,
-                entered_code=entered_code,
-                stored_code=stored_code,
-                codes_match=False,
-                expires_at=expires_at.isoformat(),
-                is_expired=False,
-                twofa_attempts=attempts,
-                reason='three_failed_2fa_attempts',
-                device_info=device_info
-            )
+            append_auth_audit(stage='2fa_locked_out', user_id=user_id,
+                              email=email_temp, session_id=session_id,
+                              device_id=device_id, ip_address=ip_address,
+                              entered_code=entered_code, stored_code=stored_code,
+                              codes_match=False, expires_at=expires_at.isoformat(),
+                              is_expired=False, twofa_attempts=attempts,
+                              reason='three_failed_attempts', device_info=device_info)
 
-            df = df[df['session_id'] != str(session_id)]
-            df.to_csv(TWO_FA_CSV, index=False)
+            if not session.get('impostor_sample_saved'):
+                impostor_ks  = session.get('pending_keystrokes', '[]')
+                impostor_uid = session.get('pending_user_id', '')
+                impostor_did = session.get('pending_device_id', '')
+                if impostor_uid and impostor_did and impostor_ks != '[]':
+                    save_keystroke_sample(impostor_uid, impostor_did,
+                                          'failed_2fa_lockout', impostor_ks,
+                                          attempt_label='test_impostor')
 
-            session.pop('pending_user_id', None)
-            session.pop('pending_session_id', None)
-            session.pop('pending_keystrokes', None)
-            session.pop('pending_device_id', None)
-            session.pop('pending_device_info', None)
-            session.pop('twofa_attempts', None)
-            session.pop('had_failed_password', None)
+            delete_where('twofa_codes', {'session_id': str(session_id)})
+            for k in ['pending_user_id', 'pending_session_id', 'pending_keystrokes',
+                      'pending_device_id', 'pending_device_info', 'twofa_attempts',
+                      'had_failed_password', 'impostor_sample_saved']:
+                session.pop(k, None)
 
             flash('Prea multe incercari. Te rugam sa te autentifici din nou.', 'error')
             return redirect(url_for('login'))
@@ -675,51 +908,60 @@ def two_fa():
         flash('Cod incorect.', 'error')
         return render_template('2fa.html')
 
-    append_auth_audit(
-        stage='2fa_compare_success',
-        user_id=user_id,
-        email=email_temp,
-        session_id=session_id,
-        device_id=device_id,
-        ip_address=ip_address,
-        entered_code=entered_code,
-        stored_code=stored_code,
-        codes_match=True,
-        expires_at=expires_at.isoformat(),
-        is_expired=False,
-        twofa_attempts=session.get('twofa_attempts', 0),
-        reason='code_valid',
-        device_info=device_info
-    )
+    # ── Cod corect ─────────────────────────────────────────────────────────
 
-    # --- code is valid: delete it immediately ---
-    df = df[df['session_id'] != str(session_id)]
-    df.to_csv(TWO_FA_CSV, index=False)
+    append_auth_audit(stage='2fa_compare_success', user_id=user_id,
+                      email=email_temp, session_id=session_id,
+                      device_id=device_id, ip_address=ip_address,
+                      entered_code=entered_code, stored_code=stored_code,
+                      codes_match=True, expires_at=expires_at.isoformat(),
+                      is_expired=False,
+                      twofa_attempts=session.get('twofa_attempts', 0),
+                      reason='code_valid', device_info=device_info)
 
+    delete_where('twofa_codes', {'session_id': str(session_id)})
 
     user_id     = session.get('pending_user_id')
     ks_raw      = session.get('pending_keystrokes', '[]')
     device_id   = session.get('pending_device_id')
     device_info = session.get('pending_device_info', '')
     user        = find_user_by_id(user_id)
-    now         = datetime.utcnow().isoformat()
-    login_id    = str(uuid.uuid4())
-    attempts             = session.get('twofa_attempts', 0)
-    had_failed_password  = session.get('had_failed_password', False)
+    attempts    = session.get('twofa_attempts', 0)
+    had_failed_password = session.get('had_failed_password', False)
 
-    # verificam si istoricul din security_events: daca userul a avut cel putin
-    # 3 failed_2fa in trecut (din sesiuni anterioare), login-ul curent e tot suspicious
+    # Preia rezultatele de scoring calculate deja in login()
+    ks_result          = session.get('pending_ks_result', {
+                             'keystroke_score': 1.0, 'score_raw': None,
+                             'threshold': None, 'n_enrollment': 0,
+                             'features': None, 'profile': None,
+                             'status': 'enrollment', 'decision': 'insufficient_data'})
+    ip_score           = session.get('pending_ip_score', 1.0)
+    ip_info            = session.get('pending_ip_info', {})
+    ip_address         = session.get('pending_ip_address', request.remote_addr)
+    decision           = session.get('pending_orchestrator_dec', '2fa')
+    login_id           = session.get('pending_login_id', str(uuid.uuid4()))
+    now                = session.get('pending_login_timestamp', datetime.utcnow().isoformat())
+    device_login_count = session.get('pending_device_login_count', 0)
+
+    record_ip(user_id, ip_address, ip_info)
+
+    # Salveaza sample keystroke
+    sample_added = False
+    if user and int(user['keystroke_enabled']) == 1:
+        label = 'enrollment_genuine' if device_login_count < ENROLLMENT_LOGINS else 'test_genuine'
+        save_keystroke_sample(user_id, device_id, login_id, ks_raw, attempt_label=label)
+        sample_added = True
+
+    final_score = ks_result['keystroke_score'] * 0.7 + ip_score * 0.3
+
+    # Verificare istoricul de failed_2fa
     historical_suspicious = False
-    try:
-        df_sec = pd.read_csv(SECURITY_CSV)
-        failed_count = len(df_sec[
-            (df_sec['user_id'] == user_id) &
-            (df_sec['event_type'] == 'failed_2fa')
-        ])
-        if failed_count >= 3:
-            historical_suspicious = True
-    except Exception:
-        pass
+    failed_count_rows = execute_query(
+        "SELECT COUNT(*) as cnt FROM security_events WHERE user_id=? AND event_type='failed_2fa'",
+        [user_id]
+    )
+    if failed_count_rows and failed_count_rows[0]['cnt'] >= 3:
+        historical_suspicious = True
 
     login_status = (
         'active_flagged_suspicious'
@@ -727,107 +969,85 @@ def two_fa():
         else 'active'
     )
 
-    ip_address = request.remote_addr
-    ip_info    = get_ip_info(ip_address)
-    ip_score   = score_ip(user_id, ip_address, KNOWN_IPS_CSV)
-    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
-    record_ip(user_id, ip_address, ip_info, KNOWN_IPS_CSV)
+    if ks_result['keystroke_score'] < 0.3:
+        login_status = 'unlawful'
+        if user:
+            send_unlawful_login_email(user['email'], format_device_info(device_info), now)
 
-    # implementare scor de risc
-    keystroke_score = 1.0  # stub pana la implementarea finala a keystroke capture
-    result          = decide(keystroke_score, ip_score)
-    print(f"[DEBUG] IP score: {ip_score}, Decision: {result}") #pt debug in consola
-    decision        = result['decision']
+    print(f"[DEBUG] keystroke={ks_result['keystroke_score']:.3f} "
+          f"raw={ks_result.get('score_raw')} ip={ip_score:.3f} decision={decision}")
 
-    # daca decizia e re-enrollment, resetam contorul dispozitivului
+    log_ml_event(user_id, device_id, login_id, ks_result,
+                 ip_score, final_score, decision, login_status, sample_added)
+
     if decision == '2fa_reenrollment':
-        try:
-            df_dev = pd.read_csv(DEVICES_CSV)
-            df_dev.loc[df_dev['device_id'] == device_id, 'login_count'] = 0
-            df_dev.loc[df_dev['device_id'] == device_id, 'enrolled']    = 0
-            df_dev.to_csv(DEVICES_CSV, index=False)
-        except Exception:
-            pass
+        update('devices', {'login_count': 0, 'enrolled': 0}, {'device_id': device_id})
 
-    try:
-        df_dev  = pd.read_csv(DEVICES_CSV)
-        dev_row = df_dev[df_dev['device_id'] == device_id]
-        device_login_count = int(dev_row.iloc[0]['login_count']) if not dev_row.empty else 0
-    except Exception:
-        device_login_count = 0
-
-    if user and int(user['keystroke_enabled']) == 1:
-        if device_login_count < ENROLLMENT_LOGINS:
-            save_keystroke_sample(KEYSTROKES_CSV, user_id, device_id, login_id, ks_raw)
-        else:
-            match = compare_profiles(KEYSTROKES_CSV, user_id, ks_raw)
-            if not match:
-                login_status = 'unlawful'
-                send_unlawful_login_email(user['email'], format_device_info(device_info), now)
-
-    append_row(LOGINS_CSV, {
-        'login_id':    login_id,
-        'user_id':     user_id,
-        'timestamp':   now,
-        'device_info': device_info,
-        'location':    f"{ip_info.get('city')}, {ip_info.get('country')}",
-        'status':      login_status,
+    insert('login_attempts', {
+        'login_id':        login_id,
+        'user_id':         user_id,
+        'device_id':       device_id,
+        'timestamp':       now,
+        'device_info':     device_info,
+        'location':        f"{ip_info.get('city')}, {ip_info.get('country')}",
+        'ip_address':      ip_address,
+        'keystroke_score': ks_result['keystroke_score'],
+        'ip_score':        ip_score,
+        'final_score':     final_score,
+        'classification':  ks_result.get('status'),
+        'decision':        decision,
+        'twofa_passed':    1,
+        'status':          login_status,
     })
-    append_row(SESSIONS_CSV, {
+    insert('sessions', {
         'session_id': login_id,
         'user_id':    user_id,
         'status':     login_status,
         'created_at': now,
     })
-    
+
     if login_status == 'active_flagged_suspicious':
         confirm_token = str(uuid.uuid4())
         token_expires = (datetime.utcnow() + timedelta(hours=24)).isoformat()
         confirm_url   = url_for('confirm_identity', token=confirm_token, _external=True)
 
-        append_row(SECURITY_CSV, {
+        insert('security_events', {
             'event_id':         str(uuid.uuid4()),
             'user_id':          user_id,
             'device_id':        device_id,
             'event_type':       'suspicious_login',
             'timestamp':        now,
-            'details':          f'{attempts} failed attempts before success',
+            'details':          f'{attempts} failed 2FA attempts before success',
             'confirm_token':    confirm_token,
             'token_expires_at': token_expires,
             'resolved':         0,
         })
-
         if user:
-            send_confirm_identity_email(user['email'], confirm_url, now, format_device_info(device_info))
+            send_confirm_identity_email(user['email'], confirm_url, now,
+                                        format_device_info(device_info))
 
     if device_id:
-        increment_device_login_count(device_id, DEVICES_CSV)
+        increment_device_login_count(device_id)
 
     new_token = session.pop('new_device_token', None)
-    session.pop('pending_user_id', None)
-    session.pop('pending_session_id', None)
-    session.pop('pending_keystrokes', None)
-    session.pop('pending_device_id', None)
-    session.pop('pending_device_info', None)
-    session.pop('twofa_attempts', None)
-    session.pop('had_failed_password', None)
+    for k in ['pending_user_id', 'pending_session_id', 'pending_keystrokes',
+              'pending_device_id', 'pending_device_info', 'twofa_attempts',
+              'had_failed_password', 'impostor_sample_saved',
+              'pending_ks_result', 'pending_ip_score', 'pending_ip_info',
+              'pending_ip_address', 'pending_orchestrator_dec', 'pending_login_id',
+              'pending_login_timestamp', 'pending_device_login_count']:
+        session.pop(k, None)
+
     session['user_id']  = user_id
     session['username'] = user['username'] if user else ''
     session.permanent   = True
 
     response = make_response(redirect(url_for('dashboard')))
     if new_token:
-        response.set_cookie(
-            'device_token',
-            new_token,
-            max_age=60*60*24*365,
-            httponly=False,
-            samesite='Lax'
-        )
+        response.set_cookie('device_token', new_token,
+                            max_age=60*60*24*365, httponly=False, samesite='Lax')
     return response
 
-
-# ── CONFIRM IDENTITY
 
 @app.route('/confirm-identity', methods=['GET'])
 def confirm_identity():
@@ -837,16 +1057,14 @@ def confirm_identity():
     if not token:
         return render_template('confirm_identity.html', valid=False, token='')
 
-    try:
-        df  = pd.read_csv(SECURITY_CSV)
-        row = df[df['confirm_token'] == token]
-    except Exception:
-        return render_template('confirm_identity.html', valid=False, token='')
+    rows = execute_query(
+        "SELECT * FROM security_events WHERE confirm_token=? LIMIT 1", [token]
+    )
 
-    if row.empty:
+    if not rows:
         return render_template('confirm_identity.html', state='invalid')
 
-    record = row.iloc[0]
+    record = rows[0]
 
     if int(record['resolved']) != 0:
         return render_template('confirm_identity.html', state='invalid')
@@ -856,19 +1074,15 @@ def confirm_identity():
         return render_template('confirm_identity.html', state='invalid')
 
     if action == 'confirm':
-        df.loc[df['confirm_token'] == token, 'resolved'] = 1
-        df.to_csv(SECURITY_CSV, index=False)
+        update('security_events', {'resolved': 1}, {'confirm_token': token})
         return render_template('confirm_identity.html', state='confirmed')
 
     if action == 'deny':
-        df.loc[df['confirm_token'] == token, 'resolved'] = -1
-        df.to_csv(SECURITY_CSV, index=False)
+        update('security_events', {'resolved': -1}, {'confirm_token': token})
         return render_template('confirm_identity.html', state='denied')
 
     return render_template('confirm_identity.html', state='pending', token=token)
 
-
-# ── DASHBOARD
 
 @app.route('/dashboard', methods=['GET'])
 def dashboard():
@@ -881,86 +1095,81 @@ def dashboard():
 
     user_id = session['user_id']
 
-    # Istoricul logarilor (logins.csv, filtrat pe user_id, ordine descrescatoare)
+    # Istoricul loginurilor
     logins = []
-    try:
-        df_logins = pd.read_csv(LOGINS_CSV)
-        df_user_logins = df_logins[df_logins['user_id'] == user_id].copy()
-        df_user_logins = df_user_logins.sort_values('timestamp', ascending=False)
-        for _, row in df_user_logins.iterrows():
-            loc = str(row.get('location', ''))
-            logins.append({
-                'timestamp': str(row.get('timestamp', ''))[:16].replace('T', ' '),
-                'location':  loc if loc not in ('', 'nan', 'None, None', 'None') else 'N/A',
-                'device':    format_device_info_text(str(row.get('device_info', ''))),
-                'status':    str(row.get('status', 'active')),
-            })
-    except Exception:
-        pass
+    login_rows = execute_query(
+        "SELECT * FROM login_attempts WHERE user_id=? ORDER BY timestamp DESC",
+        [user_id]
+    )
+    for row in login_rows:
+        loc = str(row['location'] or '')
+        logins.append({
+            'timestamp': str(row['timestamp'] or '')[:16].replace('T', ' '),
+            'location':  loc if loc not in ('', 'nan', 'None, None', 'None') else 'N/A',
+            'device':    format_device_info_text(str(row['device_info'] or '')),
+            'status':    str(row['status'] or 'active'),
+        })
 
-    # Dispozitivele asociate (devices.csv, filtrat pe user_id)
+    # Dispozitivele asociate
     devices = []
-    try:
-        df_devices = pd.read_csv(DEVICES_CSV)
-        df_user_devices = df_devices[df_devices['user_id'] == user_id].copy()
-        df_user_devices = df_user_devices.sort_values('last_seen', ascending=False)
-        for _, row in df_user_devices.iterrows():
-            login_count = int(row.get('login_count', 0))
-            enrolled    = int(row.get('enrolled', 0))
-            devices.append({
-                'first_seen':   str(row.get('first_seen', ''))[:16].replace('T', ' '),
-                'last_seen':    str(row.get('last_seen', ''))[:16].replace('T', ' '),
-                'login_count':  login_count,
-                'enrolled':     enrolled,
-                'progress_pct': min(int(login_count / 20 * 100), 100),
-            })
-    except Exception:
-        pass
+    device_rows = execute_query(
+        "SELECT * FROM devices WHERE user_id=? ORDER BY last_seen DESC",
+        [user_id]
+    )
+    for row in device_rows:
+        login_count = int(row['login_count'] or 0)
+        enrolled    = int(row['enrolled']    or 0)
+        devices.append({
+            'first_seen':   str(row['first_seen'] or '')[:16].replace('T', ' '),
+            'last_seen':    str(row['last_seen']  or '')[:16].replace('T', ' '),
+            'login_count':  login_count,
+            'enrolled':     enrolled,
+            'progress_pct': min(int(login_count / 20 * 100), 100),
+        })
+    
+    needs_face_enroll = (
+        int(user.get('keystroke_enabled', 0)) == 1 and
+        int(user.get('face_enabled', 0)) == 0
+    )
 
     return render_template('dashboard.html', user=user, logins=logins, devices=devices,
-                           enrollment_target=20)
+                           enrollment_target=20, needs_face_enroll=needs_face_enroll)
 
 
 @app.route('/settings/toggle-keystroke', methods=['POST'])
 def toggle_keystroke():
-    """Activeaza / dezactiveaza autentificarea comportamentala."""
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
     user_id = session['user_id']
-    try:
-        df = pd.read_csv(USERS_CSV)
-        current = int(df.loc[df['user_id'] == user_id, 'keystroke_enabled'].values[0])
+    row     = fetchone('users', {'user_id': user_id})
+    if row:
+        current = int(row['keystroke_enabled'] or 0)
         new_val = 0 if current == 1 else 1
-        df.loc[df['user_id'] == user_id, 'keystroke_enabled'] = new_val
-        df.to_csv(USERS_CSV, index=False)
-        if new_val == 1:
-            flash('Autentificarea comportamentala a fost activata.', 'success')
-        else:
-            flash('Autentificarea comportamentala a fost dezactivata.', 'success')
-    except Exception:
+        update('users', {'keystroke_enabled': new_val}, {'user_id': user_id})
+        msg = ('Autentificarea comportamentala a fost activata.'
+               if new_val == 1
+               else 'Autentificarea comportamentala a fost dezactivata.')
+        flash(msg, 'success')
+    else:
         flash('Eroare la actualizarea setarilor.', 'error')
 
     return redirect(url_for('dashboard'))
 
 
-# ── LOGOUT 
-
 @app.route('/logout')
 def logout():
     user_id = session.get('user_id')
-
-    # mark session as closed in sessions.csv
     if user_id:
-        try:
-            df = pd.read_csv(SESSIONS_CSV)
-            df.loc[df['user_id'] == user_id, 'status'] = 'closed'
-            df.to_csv(SESSIONS_CSV, index=False)
-        except Exception:
-            pass
+        execute_query(
+            "UPDATE sessions SET status='closed' WHERE user_id=?", [user_id]
+        )
+        from utils.database import get_db
+        get_db().commit()
 
     session.clear()
     return redirect(url_for('login'))
+
 
 if __name__ == '__main__':
     app.run(debug=True)

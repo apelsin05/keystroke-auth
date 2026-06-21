@@ -47,7 +47,7 @@ The first **20 logins** operate in enrollment mode. Keystroke samples are collec
 
 The threshold is defined as:
 ```python
-ENROLLMENT_LOGINS = 20
+ENROLLMENT_LOGINS = 12
 ```
 
 ### Scoring phase

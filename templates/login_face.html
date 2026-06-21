@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Verificare identitate</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+  <style>
+    body {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      min-height: 100vh; padding: 2rem 1rem;
+    }
+
+    .login-face-card {
+      background: var(--card);
+      border-radius: 28px;
+      border: 2.5px solid var(--border);
+      box-shadow: var(--shadow-lg);
+      padding: 2.5rem 2rem;
+      width: 100%; max-width: 440px;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 1.25rem;
+    }
+
+    .card-icon {
+      width: 3rem; height: 3rem; border-radius: 50%;
+      background: rgba(199,125,190,0.12);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary);
+    }
+
+    .login-face-card h1 {
+      font-size: 1.35rem; font-weight: 700;
+      color: var(--fg); text-align: center; letter-spacing: -0.02em;
+    }
+    .login-face-card h1 span { color: var(--primary); }
+
+    .guide-hint {
+      color: var(--muted); font-size: 0.85rem;
+      text-align: center; line-height: 1.6; max-width: 340px;
+    }
+
+    /* ── result card ── */
+    .result-card {
+      display: none; width: 100%;
+      border-radius: 16px; padding: 1.5rem;
+      border: 2px solid var(--border);
+      flex-direction: column; align-items: center;
+      text-align: center; gap: 0.6rem;
+    }
+    .result-card.match     { background: rgba(21,128,61,0.06);  border-color: rgba(21,128,61,0.3); }
+    .result-card.no_match  { background: rgba(220,38,38,0.06);  border-color: rgba(220,38,38,0.25); }
+    .result-card.uncertain { background: rgba(234,179,8,0.06);  border-color: rgba(234,179,8,0.3); }
+
+    .result-icon  { font-size: 2.2rem; line-height: 1; }
+    .result-label { font-size: 1rem; font-weight: 700; }
+    .result-card.match     .result-label { color: #15803d; }
+    .result-card.no_match  .result-label { color: #b91c1c; }
+    .result-card.uncertain .result-label { color: #a16207; }
+
+    .result-distance { font-size: 0.82rem; color: var(--muted); }
+    .result-distance strong { color: var(--fg); }
+    .result-redirect { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
+
+    /* ── preview bar ── */
+    #preview-bar {
+      display: none;
+      gap: 0.5rem; flex-wrap: wrap; justify-content: center;
+      padding: 0.6rem 1rem;
+      background: rgba(255,201,212,0.18);
+      border: 1.5px dashed rgba(199,125,190,0.45);
+      border-radius: 12px;
+      font-size: 0.78rem; color: var(--muted);
+    }
+    #preview-bar span { font-weight: 600; width: 100%; text-align: center; }
+    #preview-bar button {
+      padding: 0.3rem 0.85rem; border-radius: 50px; border: none; cursor: pointer;
+      font-family: inherit; font-size: 0.78rem; font-weight: 600;
+    }
+    #preview-bar .pb-confirm  { background: rgba(199,125,190,0.15); color: var(--primary); }
+    #preview-bar .pb-match    { background: rgba(21,128,61,0.12);   color: #15803d; }
+    #preview-bar .pb-nomatch  { background: rgba(220,38,38,0.10);   color: #b91c1c; }
+    #preview-bar .pb-uncertain{ background: rgba(234,179,8,0.10);   color: #a16207; }
+  </style>
+</head>
+<body>
+
+<!-- preview controls (only visible when PREVIEW_MODE = true) -->
+<div id="preview-bar">
+  <span>Preview controls</span>
+  <button class="pb-confirm"   onclick="previewConfirm()">Confirmare foto</button>
+  <button class="pb-match"     onclick="previewResult('match',    0.2341)">✓ Match</button>
+  <button class="pb-nomatch"   onclick="previewResult('no_match', 0.7812)">✗ No match</button>
+  <button class="pb-uncertain" onclick="previewResult('uncertain', 0.5503)">? Uncertain</button>
+</div>
+
+<div class="login-face-card">
+
+  <div class="card-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"
+         fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+    </svg>
+  </div>
+
+  <h1>Verificare <span>facială</span></h1>
+
+  <p class="guide-hint">
+    Poziționează-te astfel încât fruntea să atingă marginea de sus a chenarului
+    și bărbia marginea de jos. Chenarul devine verde când ești corect aliniat.
+    Stai nemișcat 3 secunde.
+  </p>
+
+  <div class="face-enroll-wrap">
+
+    <!-- camera -->
+    <div class="face-video-wrap">
+      <video id="face-video" autoplay muted playsinline></video>
+      <canvas id="face-canvas"></canvas>
+    </div>
+    <p id="face-status" class="face-status-msg">Se inițializează camera...</p>
+
+    <!-- confirmation -->
+    <div id="face-confirm-section" style="display:none; width:100%;">
+      <p style="text-align:center; color:var(--muted); font-size:0.875rem; margin-bottom:1rem;">
+        Imaginea capturată este clară și fața este vizibilă?
+      </p>
+      <div style="display:flex; justify-content:center; margin-bottom:1.25rem;">
+        <img id="face-thumb"
+             style="width:160px; height:120px; object-fit:cover;
+                    border-radius:12px; border:2px solid var(--border);
+                    box-shadow:var(--shadow); transform:scaleX(-1);">
+      </div>
+      <p style="text-align:center; font-weight:600; font-size:0.925rem; margin-bottom:0.75rem;">
+        Imaginea este satisfăcătoare?
+      </p>
+      <div style="display:flex; gap:0.75rem; justify-content:center;">
+        <button id="face-confirm-yes" class="btn-primary">Da, continuă</button>
+        <button id="face-confirm-no"  class="btn-outline">Nu, reia</button>
+      </div>
+    </div>
+
+    <!-- result -->
+    <div id="face-result-card" class="result-card">
+      <div id="result-icon"     class="result-icon"></div>
+      <div id="result-label"    class="result-label"></div>
+      <div id="result-distance" class="result-distance"></div>
+      <div id="result-redirect" class="result-redirect"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Toggle this flag to enable/disable preview controls ──────────────────────
+const PREVIEW_MODE = false;
+
+// ── State ────────────────────────────────────────────────────────────────────
+const videoEl   = document.getElementById('face-video');
+const canvasEl  = document.getElementById('face-canvas');
+const ctx       = canvasEl.getContext('2d');
+const statusMsg = document.getElementById('face-status');
+
+let capturedFrame = null;
+let alignedSince  = null;
+let capturing     = false;
+let cameraStream  = null;
+let paused        = false;
+
+const ALIGN_TIMEOUT = 3000;
+const GUIDE         = { x: 0.20, y: 0.20, w: 0.60, h: 0.60 };
+const TOLERANCE     = 0.15;
+
+// ── Preview helpers ───────────────────────────────────────────────────────────
+if (PREVIEW_MODE) {
+  document.getElementById('preview-bar').style.display = 'flex';
+}
+
+function previewConfirm() {
+  capturedFrame = 'https://placehold.co/320x240/e8d4f2/8e7a94?text=Preview+Face';
+  showConfirmation();
+}
+
+function previewResult(decision, distance) {
+  document.getElementById('face-confirm-section').style.display = 'none';
+  document.getElementById('face-result-card').style.display = 'none';
+  showResult({ decision, distance, redirect_to: '/dashboard' });
+}
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    videoEl.srcObject = cameraStream;
+    videoEl.onloadedmetadata = () => {
+      canvasEl.width  = videoEl.clientWidth;
+      canvasEl.height = videoEl.clientHeight;
+      setupMediaPipe();
+    };
+  } catch (err) {
+    statusMsg.textContent = PREVIEW_MODE
+      ? 'Camera indisponibilă — folosește butoanele Preview de mai sus.'
+      : 'Eroare la accesarea camerei: ' + err.message;
+    statusMsg.style.color = PREVIEW_MODE ? 'var(--muted)' : 'red';
+  }
+}
+
+function stopCamera() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+}
+
+// ── MediaPipe ────────────────────────────────────────────────────────────────
+function setupMediaPipe() {
+  const fd = new FaceDetection({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}`
+  });
+  fd.setOptions({ minDetectionConfidence: 0.7, model: 'short' });
+  fd.onResults(onResults);
+  (async function loop() { await fd.send({ image: videoEl }); requestAnimationFrame(loop); })();
+}
+
+// ── Guide box (identic cu face_capture.js) ───────────────────────────────────
+function drawGuide(color) {
+  const w = canvasEl.width, h = canvasEl.height;
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(w * GUIDE.x, h * GUIDE.y, w * GUIDE.w, h * GUIDE.h);
+}
+
+// ── Aliniere și detecție ──────────────────────────────────────────────────────
+function onResults(results) {
+  if (paused) return;
+  const w = canvasEl.width, h = canvasEl.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!results.detections || results.detections.length === 0) {
+    alignedSince = null;
+    drawGuide('red');
+    statusMsg.textContent = 'Poziționează fața în chenar';
+    statusMsg.style.color = '';
+    return;
+  }
+
+  const box         = results.detections[0].boundingBox;
+  const faceTop     = (box.yCenter - box.height / 2) * h;
+  const faceBottom  = (box.yCenter + box.height / 2) * h;
+  const faceCenterX = box.xCenter * w;
+  const guideTop    = h * GUIDE.y;
+  const guideBottom = h * (GUIDE.y + GUIDE.h);
+  const guideCenterX = w * (GUIDE.x + GUIDE.w / 2);
+  const tol          = h * TOLERANCE;
+
+  const aligned =
+    Math.abs(faceTop    - guideTop)      < tol &&
+    Math.abs(faceBottom - guideBottom)   < tol &&
+    Math.abs(faceCenterX - guideCenterX) < w * 0.15;
+
+  if (aligned && !capturing) {
+    drawGuide('lime');
+    if (alignedSince === null) alignedSince = Date.now();
+    const elapsed   = Date.now() - alignedSince;
+    const remaining = Math.ceil((ALIGN_TIMEOUT - elapsed) / 1000);
+    if (elapsed >= ALIGN_TIMEOUT) {
+      captureFrame();
+    } else {
+      statusMsg.textContent = `Stai nemișcat: ${remaining}s`;
+      statusMsg.style.color = '';
+    }
+  } else {
+    alignedSince = null;
+    drawGuide('red');
+    const fH = faceBottom - faceTop;
+    if      (fH < h * GUIDE.h * 0.5)        statusMsg.textContent = 'Apropie-te de cameră';
+    else if (fH > h * GUIDE.h * 1.3)        statusMsg.textContent = 'Îndepărtează-te puțin';
+    else if (faceTop > guideTop + tol)       statusMsg.textContent = 'Ridică privirea';
+    else if (faceBottom < guideBottom - tol) statusMsg.textContent = 'Coboară puțin';
+    else                                     statusMsg.textContent = 'Centrează fața în chenar';
+    statusMsg.style.color = '';
+  }
+}
+
+// ── Captură ───────────────────────────────────────────────────────────────────
+function captureFrame() {
+  capturing = true;
+  statusMsg.textContent = 'Capturez...';
+  const vW = videoEl.videoWidth,  vH = videoEl.videoHeight;
+  const cW = canvasEl.width,      cH = canvasEl.height;
+  const scale = Math.max(cW / vW, cH / vH);
+  const srcW = cW / scale, srcH = cH / scale;
+  ctx.drawImage(videoEl, (vW - srcW) / 2, (vH - srcH) / 2, srcW, srcH, 0, 0, cW, cH);
+  capturedFrame = canvasEl.toDataURL('image/jpeg', 0.90);
+  showConfirmation();
+}
+
+function showConfirmation() {
+  paused = true;
+  document.getElementById('face-thumb').src = capturedFrame;
+  document.getElementById('face-confirm-section').style.display = '';
+  canvasEl.parentElement.style.display = 'none';
+  statusMsg.textContent = '';
+}
+
+function resetCapture() {
+  capturedFrame = null;
+  alignedSince  = null;
+  capturing     = false;
+  paused        = false;
+  document.getElementById('face-confirm-section').style.display = 'none';
+  document.getElementById('face-result-card').style.display     = 'none';
+  canvasEl.parentElement.style.display = '';
+  statusMsg.textContent = 'Poziționează fața în chenar';
+  statusMsg.style.color = '';
+}
+
+// ── Submit ────────────────────────────────────────────────────────────────────
+async function submitFrame() {
+  document.getElementById('face-confirm-yes').disabled = true;
+  document.getElementById('face-confirm-no').disabled  = true;
+  statusMsg.textContent = 'Se verifică...';
+
+  if (PREVIEW_MODE) {
+    await new Promise(r => setTimeout(r, 900));
+    stopCamera();
+    document.getElementById('face-confirm-section').style.display = 'none';
+    showResult({ decision: 'match', distance: 0.2341, redirect_to: '/dashboard' });
+    return;
+  }
+
+  try {
+    const res  = await fetch('/login/face', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ frame_b64: capturedFrame })
+    });
+    const data = await res.json();
+    stopCamera();
+    document.getElementById('face-confirm-section').style.display = 'none';
+    showResult(data);
+  } catch (err) {
+    statusMsg.textContent = 'Eroare de rețea: ' + err.message;
+    statusMsg.style.color = 'red';
+    document.getElementById('face-confirm-yes').disabled = false;
+    document.getElementById('face-confirm-no').disabled  = false;
+  }
+}
+
+// ── Result card ───────────────────────────────────────────────────────────────
+function showResult(data) {
+  const decision   = data.decision   || 'uncertain';
+  const distance   = typeof data.distance === 'number' ? data.distance : null;
+  const redirectTo = data.redirect_to || '/login';
+
+  const cfg = {
+    match:     { icon: '✓', label: 'Identitate confirmată' },
+    no_match:  { icon: '✗', label: 'Identitate neconfirmată' },
+    uncertain: { icon: '?', label: 'Rezultat incert' },
+  };
+  const { icon, label } = cfg[decision] || cfg.uncertain;
+
+  const card = document.getElementById('face-result-card');
+  card.className = `result-card ${decision}`;
+  document.getElementById('result-icon').textContent    = icon;
+  document.getElementById('result-label').textContent   = label;
+  document.getElementById('result-distance').innerHTML  = distance !== null
+    ? `Distanță cosinus: <strong>${distance.toFixed(4)}</strong>`
+    : '';
+  card.style.display = 'flex';
+  statusMsg.textContent = '';
+
+  if (!PREVIEW_MODE) {
+    const delayS = decision === 'match' ? 3 : 5;
+    document.getElementById('result-redirect').textContent = `Redirecționare în ${delayS}s...`;
+    setTimeout(() => { window.location.href = redirectTo; }, delayS * 1000);
+  }
+}
+
+// ── Wiring ────────────────────────────────────────────────────────────────────
+document.getElementById('face-confirm-yes').addEventListener('click', submitFrame);
+document.getElementById('face-confirm-no').addEventListener('click',  resetCapture);
+
+startCamera();
+</script>
+</body>
+</html>

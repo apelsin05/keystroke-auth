@@ -46,3 +46,48 @@
     .settings-desc  { font-size: 0.82rem; color: var(--muted); line-height: 1.5; max-width: 480px; }
     .empty-state { text-align: center; padding: 2rem; color: var(--muted); font-size: 0.875rem; }
     .dash-flash-wrap { width: 100%; max-width: 960px; margin-bottom: 0.5rem; }
+
+    .face-enroll-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  max-width: 960px;
+  padding: 1rem 1.25rem;
+  background: rgba(199,125,190,0.08);
+  border: 2px solid rgba(199,125,190,0.35);
+  border-radius: 16px;
+  flex-wrap: wrap;
+}
+
+.face-enroll-banner-icon {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  background: rgba(199,125,190,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.face-enroll-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 200px;
+}
+
+.face-enroll-banner-text strong {
+  font-size: 0.925rem;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.face-enroll-banner-text span {
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.5;
+}

@@ -32,6 +32,25 @@
       {% endif %}
     {% endwith %}
 
+
+{% if needs_face_enroll %}
+    <div class="face-enroll-banner">
+      <div class="face-enroll-banner-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        </svg>
+      </div>
+      <div class="face-enroll-banner-text">
+        <strong>Înrolare facială necesară</strong>
+        <span>Ai activat securitatea extra, dar nu ți-ai înrolat fața încă. Fă asta pentru ca protecția să fie completă.</span>
+      </div>
+      <a href="/face/enroll" class="btn-primary">Înrolează-te →</a>
+    </div>
+    {% endif %}
+
     <!-- STAT CARDS -->
     <div class="cards-row">
 
@@ -120,6 +139,76 @@
         {% endif %}
       </form>
     </div>
+
+        <!-- AUTENTIFICARE FACIALA -->
+    <p class="section-title">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8" r="4"/><path d="M6 20v-1a6 6 0 0 1 12 0v1"/>
+        <path d="M19 11a7 7 0 0 1-14 0"/>
+      </svg>
+      Autentificare faciala
+    </p>
+
+    <div class="settings-card">
+      <div class="settings-info">
+        <div class="settings-label">Recunoastere faciala (Face Recognition)</div>
+        <div class="settings-desc">
+          La fiecare autentificare, sistemul compara imaginea capturata cu profilul tau inrolat.
+          Activarea necesita acordul tau explicit si inrolarea unui profil facial.
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.75rem;min-width:fit-content;">
+        {% if user.face_enabled == 1 or user.face_enabled == "1" or user.face_enabled == True %}
+          <span class="badge badge-active">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            Inrolat
+          </span>
+          <form action="/settings/revoke-face" method="POST">
+            <button type="submit" class="btn-danger">Revoca profilul facial</button>
+          </form>
+        {% else %}
+          <span class="badge badge-inactive">Neinrolat</span>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-size:0.875rem;color:var(--text);">
+            <input type="checkbox" id="face-activate-cb" style="accent-color:var(--primary);width:1rem;height:1rem;">
+            Activeaza autentificarea faciala
+          </label>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if not (user.face_enabled == 1 or user.face_enabled == "1" or user.face_enabled == True) %}
+    <div id="face-capture-section" style="display:none;">
+      <div class="face-enroll-wrap" style="margin-top:1rem;">
+        <p style="color:var(--muted);font-size:0.875rem;text-align:center;max-width:420px;line-height:1.6;margin-bottom:1rem;">
+          Pozitioneaza-te astfel incat fruntea sa atinga marginea de sus a chenarului
+          si barbia marginea de jos. Chenarul devine verde cand esti corect aliniat.
+          Stai nemistat 3 secunde.
+        </p>
+        <div class="face-video-wrap">
+          <video id="face-video" autoplay muted playsinline></video>
+          <canvas id="face-canvas"></canvas>
+        </div>
+        <p id="face-status" class="face-status-msg">Se initializeaza camera...</p>
+
+        <div id="face-confirm-section" style="display:none; margin-top:1.5rem; width:100%;">
+          <p style="text-align:center; color:var(--muted); font-size:0.875rem; margin-bottom:1rem;">
+            Verifica daca imaginile sunt clare si fata este vizibila:
+          </p>
+          <div style="display:flex; gap:0.75rem; justify-content:center; margin-bottom:1.25rem;">
+            <img id="face-thumb-1" style="width:120px; height:90px; object-fit:cover; border-radius:8px; border:2px solid var(--border);">
+            <img id="face-thumb-2" style="width:120px; height:90px; object-fit:cover; border-radius:8px; border:2px solid var(--border);">
+            <img id="face-thumb-3" style="width:120px; height:90px; object-fit:cover; border-radius:8px; border:2px solid var(--border);">
+          </div>
+          <p style="text-align:center; font-weight:600; margin-bottom:0.75rem;">Imaginile sunt corecte?</p>
+          <div style="display:flex; gap:0.75rem; justify-content:center;">
+            <button id="face-confirm-yes" class="btn-primary">Da, continua</button>
+            <button id="face-confirm-no" class="btn-outline">Nu, reia capturarea</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    {% endif %}
 
     <!-- DISPOZITIVE -->
     <p class="section-title">
@@ -232,6 +321,37 @@
     el.style.width = el.dataset.pct + '%';
   });
 </script>
+
+{% if not (user.face_enabled == 1 or user.face_enabled == "1" or user.face_enabled == True) %}
+<script>
+  const _cbFace = document.getElementById('face-activate-cb');
+  const _captureSection = document.getElementById('face-capture-section');
+
+  _cbFace.addEventListener('change', function () {
+    if (this.checked) {
+      _captureSection.style.display = '';
+
+      const mp = document.createElement('script');
+      mp.crossOrigin = 'anonymous';
+      mp.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js';
+      mp.onload = function () {
+        const fc = document.createElement('script');
+        fc.src = "{{ url_for('static', filename='js/face_capture.js') }}";
+        document.head.appendChild(fc);
+      };
+      document.head.appendChild(mp);
+    } else {
+      if (typeof stopCamera === 'function') stopCamera();
+      _captureSection.style.display = 'none';
+    }
+  });
+
+  window.onFaceEnrollSuccess = function () {
+    setTimeout(function () { location.reload(); }, 1500);
+  };
+</script>
+{% endif %}
+
 
 </body>
 </html>
